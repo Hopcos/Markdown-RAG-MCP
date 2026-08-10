@@ -1,4 +1,4 @@
-# MCP-Markdown-RAG (.NET 8 port) / MCP-Markdown-RAG（.NET 8 移植版）
+# MCP-Markdown-RAG (.NET 10 port) / MCP-Markdown-RAG（.NET 10 移植版）
 
 [English](#english) · [中文](#中文)
 
@@ -7,7 +7,7 @@
 ## English
 
 A **Model Context Protocol (MCP)** server that provides a **local-first RAG engine** for your
-markdown documents. This is a faithful .NET 8 reimplementation of
+markdown documents. This is a faithful .NET 10 reimplementation of
 [MCP-Markdown-RAG](https://github.com/Zackriya-Solutions/MCP-Markdown-RAG), preserving the
 original's behavior and tool surface while adopting a clean, highly-extensible .NET design.
 
@@ -134,7 +134,7 @@ Publish a self-contained executable:
 
 ```bash
 dotnet publish -c Release -r win-x64 --self-contained false
-# exe: bin/Release/net8.0/win-x64/publish/mcp-markdown-rag.exe
+# exe: bin/Release/net10.0/win-x64/publish/mcp-markdown-rag.exe
 ```
 
 (For a fully self-contained build that needs no .NET runtime installed, use `--self-contained true`.)
@@ -223,7 +223,7 @@ Pick one of these three launch styles:
 - **Command**: `dotnet`
 - **Arguments** (one per line):
   ```
-  E:\path\to\markdown_rag_mcp_dotnet\bin\Release\net8.0\mcp-markdown-rag.dll
+  E:\path\to\markdown_rag_mcp_dotnet\bin\Release\net10.0\mcp-markdown-rag.dll
   ```
 
 Click **Connect**. The lower-left panel should show the server name `mcp-markdown-rag` and the
@@ -342,7 +342,7 @@ Apache 2.0, matching the upstream project.
 
 一个 **Model Context Protocol (MCP)** 服务器，为你的 Markdown 文档提供**本地优先的 RAG
 引擎**。本项目是
-[MCP-Markdown-RAG](https://github.com/Zackriya-Solutions/MCP-Markdown-RAG) 的 .NET 8 忠实复刻，
+[MCP-Markdown-RAG](https://github.com/Zackriya-Solutions/MCP-Markdown-RAG) 的 .NET 10 忠实复刻，
 保留了原项目的行为与工具接口，同时采用清晰、高可扩展的 .NET 设计。
 
 ✅ **本地优先、隐私安全** —— 所有数据在本地处理与存储，索引过程不会把任何内容发送到第三方服务。
@@ -452,7 +452,7 @@ Milvus 客户端、把 ONNX 嵌入换成云端嵌入 API、或换用别的分块
 
 ```bash
 dotnet publish -c Release -r win-x64 --self-contained false
-# 产物：bin/Release/net8.0/win-x64/publish/mcp-markdown-rag.exe
+# 产物：bin/Release/net10.0/win-x64/publish/mcp-markdown-rag.exe
 ```
 
 （如需不依赖 .NET 运行时的完全自包含构建，使用 `--self-contained true`。）
@@ -540,7 +540,7 @@ npx @modelcontextprotocol/inspector
 - **Command**: `dotnet`
 - **Arguments**（每行一个）：
   ```
-  E:\path\to\markdown_rag_mcp_dotnet\bin\Release\net8.0\mcp-markdown-rag.dll
+  E:\path\to\markdown_rag_mcp_dotnet\bin\Release\net10.0\mcp-markdown-rag.dll
   ```
 
 点 **Connect**。左下角面板应显示服务器名 `mcp-markdown-rag` 与三个工具
