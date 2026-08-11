@@ -19,6 +19,9 @@ keywords.
 
 ✅ **MCP-compatible** — works with any MCP host (Claude Desktop, Windsurf, Cursor, …).
 
+✅ **Two transports** — run as a stdio child process (default) or as a Streamable HTTP
+service over Kestrel, selected from `appsettings.json`.
+
 ✅ **Extensible** — every external concern (embedding, vector storage, chunking, file
 discovery, index tracking) sits behind an interface, so alternative providers can be swapped in
 via DI without touching call sites.
@@ -45,7 +48,7 @@ Indexing works in the same two modes as the original:
 
 | Area | File(s) | Purpose |
 |------|---------|---------|
-| Host | `Program.cs` | Host + DI wiring (stdio transport, logging→stderr) |
+| Host | `Program.cs` | Host + DI wiring; stdio *or* Streamable HTTP transport, logging→stderr |
 | Tools | `Tools/MarkdownRagTools.cs` | Thin MCP tool adapters (`[McpServerTool]` methods) |
 | Orchestration | `Services/MarkdownRagService.cs` | Indexing/search orchestration |
 | Abstractions | `Abstractions/*.cs` | `IEmbeddingProvider`, `IVectorStore`, `IMarkdownChunker`, `IIndexTracker`, `IMarkdownFileDiscovery`, `ITextTokenizer` |
@@ -63,9 +66,9 @@ registration change. The tools and the orchestration service never reference a c
 implementation.
 
 **Configuration only in appsettings** — there is no command-line surface. `appsettings.json`
-controls the database path, collection name, embedding model + dimension, chunk size/overlap,
-default search limit, and batch size. Tool arguments (`directory`, `recursive`,
-`force_reindex`, `k`) keep the original defaults.
+controls the transport (stdio vs. HTTP), the HTTP bind URL/route, the database path, collection
+name, embedding model + dimension, chunk size/overlap, default search limit, and batch size. Tool
+arguments (`directory`, `recursive`, `force_reindex`, `k`) keep the original defaults.
 
 **Functional parity** — same three tools, same arguments and defaults, same incremental-vs-full
 reindex semantics, same md5+mtime change detection, same `---`-separated search output, same
@@ -86,6 +89,12 @@ section:
 ```jsonc
 {
   "MarkdownRag": {
+    "Transport": "Stdio",                  // "Stdio" (default) or "Http" (Streamable HTTP)
+    "TransportSettings": {
+      "HttpEndpointUrl": "http://localhost:3001", // Kestrel bind URL (Transport=Http only)
+      "HttpRoutePrefix": "",                // route prefix, e.g. "/mcp"; "" = root
+      "Stateless": true                     // stateless mode (recommended for servers)
+    },
     "DatabasePath": "./.db",                 // tracking + vector store files
     "CollectionName": "markdown_vectors",
     "TrackingFileName": "index_tracking.json",
@@ -105,6 +114,19 @@ section:
   }
 }
 ```
+
+> **Transport selection** — `Transport` chooses between the two MCP transports:
+> - `"Stdio"` (default) — JSON-RPC over stdin/stdout; the server runs as a child process of
+>   the host (Claude Desktop, Cursor, Claude Code, …). Logging is forced to stderr.
+> - `"Http"` — Streamable HTTP over Kestrel at `HttpEndpointUrl`. Use this for network hosts
+>   (Claude Desktop with an HTTP server URL, remote containers, web clients). `Stateless=true`
+>   is recommended; set it false only if a client needs server-initiated requests
+>   (sampling/elicitation), which this server does not issue. Any setting under
+>   `TransportSettings` is ignored when `Transport=Stdio`.
+>
+> Every config value can also be overridden with environment variables using the standard
+> `__`-segment notation, e.g. `MarkdownRag__Transport=Http` or
+> `MarkdownRag__TransportSettings__HttpEndpointUrl=http://0.0.0.0:8080`.
 
 > **First run:** the embedding model (~90 MB) is downloaded automatically from Hugging Face
 > and cached under `ModelCachePath`. To avoid a first-call timeout, the server starts a
@@ -161,6 +183,53 @@ the built executable — no `dotnet run` needed:
 > `appsettings.json` next to `mcp-markdown-rag.exe`. On Linux/macOS use the forward-slash
 > path to the `mcp-markdown-rag` binary.
 
+#### HTTP (Streamable HTTP transport)
+
+Set `Transport` to `Http` in `appsettings.json` (and configure `HttpEndpointUrl` /
+`HttpRoutePrefix` / `Stateless` under `TransportSettings`), then run the exe directly. The
+server starts listening on the configured URL and exposes the MCP Streamable HTTP endpoint at
+the root (or at `HttpRoutePrefix` such as `/mcp`).
+
+```jsonc
+{
+  "MarkdownRag": {
+    "Transport": "Http",
+    "TransportSettings": {
+      "HttpEndpointUrl": "http://localhost:3001",
+      "HttpRoutePrefix": "",
+      "Stateless": true
+    }
+    // …其余 MarkdownRag 配置不变
+  }
+}
+```
+
+```bash
+./mcp-markdown-rag.exe        # 现在监听 http://localhost:3001
+```
+
+Then point an HTTP-capable MCP host at the URL. Example for Claude Desktop (Streamable HTTP):
+
+```json
+{
+  "mcpServers": {
+    "markdown_rag": {
+      "url": "http://localhost:3001"
+    }
+  }
+}
+```
+
+> **Security.** The default `HttpEndpointUrl` binds to `localhost` so the server is reachable
+> only from the same machine. If you bind to `0.0.0.0` or a public interface to share the
+> server across machines, put it behind a reverse proxy that enforces authentication and TLS,
+> and configure ASP.NET Core's `AllowedHosts` rather than relying on the wildcard. The server
+> itself has no built-in auth — it is intended for trusted local/loopback use.
+>
+> **`Stateless` mode.** `true` (default) is recommended: each HTTP request is independent, the
+> server keeps no session state, and it never issues server-to-client requests. Set `false` only
+> if a client requires sampling/elicitation callbacks, which this server does not use.
+
 #### Claude Desktop / Windsurf / Cursor (dotnet run)
 
 ```json
@@ -188,8 +257,10 @@ Launch the inspector UI:
 npx @modelcontextprotocol/inspector
 ```
 
-In the inspector, open **Add Server** and fill in the fields. This server is a local stdio
-process, so set **Transport Type** to `STDIO`. The remaining fields:
+In the inspector, open **Add Server** and fill in the fields. This server supports both stdio
+(local process) and Streamable HTTP — pick the matching **Transport Type**.
+
+**Stdio** — set **Transport Type** to `STDIO`. The remaining fields:
 
 | Field | What to enter |
 |-------|---------------|
@@ -197,6 +268,11 @@ process, so set **Transport Type** to `STDIO`. The remaining fields:
 | **Command** | The executable that launches the server (see options below) |
 | **Arguments** | Arguments passed to the command, one per line. Leave empty when using the `.exe` directly. |
 | **Environment Variables** | Extra env vars (key/value). Not required by this server — leave empty. |
+
+**HTTP** — set **Transport Type** to `STREAMABLE HTTP`, then point at the running server.
+
+- **URL**: `http://localhost:3001/` (or whatever `HttpEndpointUrl` + `HttpRoutePrefix` you
+  configured; start the server first with `Transport=Http`).
 
 Pick one of these three launch styles:
 
@@ -351,6 +427,8 @@ Apache 2.0, matching the upstream project.
 
 ✅ **兼容 MCP** —— 可接入任何支持 MCP 的宿主（Claude Desktop、Windsurf、Cursor 等）。
 
+✅ **两种传输方式** —— 既可作为 stdio 子进程运行（默认），也可作为基于 Kestrel 的 Streamable HTTP 服务运行，由 `appsettings.json` 选择。
+
 ✅ **高可扩展** —— 所有外部依赖（嵌入、向量存储、分块、文件发现、索引追踪）都隐藏在接口背后，
 通过 DI 替换实现即可，调用方无需改动。
 
@@ -374,7 +452,7 @@ Apache 2.0, matching the upstream project.
 
 | 区域 | 文件 | 作用 |
 |------|------|------|
-| 宿主 | `Program.cs` | 宿主 + DI 装配（stdio 传输、日志输出到 stderr） |
+| 宿主 | `Program.cs` | 宿主 + DI 装配；支持 stdio 或 Streamable HTTP 传输，日志输出到 stderr |
 | 工具 | `Tools/MarkdownRagTools.cs` | 精简的 MCP 工具适配器（`[McpServerTool]` 方法） |
 | 编排 | `Services/MarkdownRagService.cs` | 索引/搜索的编排逻辑 |
 | 抽象 | `Abstractions/*.cs` | `IEmbeddingProvider`、`IVectorStore`、`IMarkdownChunker`、`IIndexTracker`、`IMarkdownFileDiscovery`、`ITextTokenizer` |
@@ -389,9 +467,9 @@ Apache 2.0, matching the upstream project.
 Milvus 客户端、把 ONNX 嵌入换成云端嵌入 API、或换用别的分块器，都只需改一行 DI 注册。工具层与
 编排服务从不直接引用具体实现。
 
-**配置仅写在 appsettings** —— 没有命令行参数。`appsettings.json` 控制数据库路径、集合名、嵌入模型与
-维度、分块大小/重叠、默认搜索数量、批大小。工具参数（`directory`、`recursive`、`force_reindex`、
-`k`）保持原项目的默认值。
+**配置仅写在 appsettings** —— 没有命令行参数。`appsettings.json` 控制传输方式（stdio 还是
+HTTP）、HTTP 绑定 URL/路由、数据库路径、集合名、嵌入模型与维度、分块大小/重叠、默认搜索数量、批大小。工具参数
+（`directory`、`recursive`、`force_reindex`、`k`）保持原项目的默认值。
 
 **功能一致性** —— 同样三个工具、同样的参数与默认值、同样的增量/全量索引语义、同样的 md5+mtime 变更
 检测、同样的以 `---` 分隔的搜索输出、同样的「Already up to date / Directory does not exist」提示，
@@ -408,6 +486,12 @@ Milvus 客户端、把 ONNX 嵌入换成云端嵌入 API、或换用别的分块
 ```jsonc
 {
   "MarkdownRag": {
+    "Transport": "Stdio",                  // "Stdio"（默认）或 "Http"（Streamable HTTP）
+    "TransportSettings": {
+      "HttpEndpointUrl": "http://localhost:3001", // Kestrel 绑定 URL（仅 Transport=Http 时生效）
+      "HttpRoutePrefix": "",                // 路由前缀，如 "/mcp"；"" 表示根路径
+      "Stateless": true                     // 无状态模式（服务端推荐）
+    },
     "DatabasePath": "./.db",                 // 追踪文件与向量库文件所在目录
     "CollectionName": "markdown_vectors",
     "TrackingFileName": "index_tracking.json",
@@ -427,6 +511,17 @@ Milvus 客户端、把 ONNX 嵌入换成云端嵌入 API、或换用别的分块
   }
 }
 ```
+
+> **传输方式选择** —— `Transport` 在两种 MCP 传输间切换：
+> - `"Stdio"`（默认）—— 经 stdin/stdout 的 JSON-RPC；服务器作为宿主（Claude Desktop、Cursor、
+>   Claude Code 等）的子进程运行。日志强制输出到 stderr。
+> - `"Http"` —— 经 Kestrel 的 Streamable HTTP，监听 `HttpEndpointUrl`。适用于网络宿主
+>   （配置 HTTP server URL 的 Claude Desktop、远程容器、Web 客户端）。推荐 `Stateless=true`；
+>   仅当客户端需要服务端发起的请求（采样/elicitation）时才设为 false，本服务器不会发起此类请求。
+>   `Transport=Stdio` 时 `TransportSettings` 下的任何设置都会被忽略。
+>
+> 每个配置项也可用环境变量覆盖，使用标准的 `__` 分段写法，例如 `MarkdownRag__Transport=Http`
+> 或 `MarkdownRag__TransportSettings__HttpEndpointUrl=http://0.0.0.0:8080`。
 
 > **首次运行：** 嵌入模型（约 90 MB）会自动从 Hugging Face 下载并缓存到 `ModelCachePath`。为避免
 > 首次调用超时，服务器在启动时会开启**后台预加载**：在 MCP 握手进行的同时下载模型并构建 ONNX
@@ -478,6 +573,49 @@ dotnet publish -c Release -r win-x64 --self-contained false
 > exe 会从自身所在目录读取 `appsettings.json`，因此请把配置好的 `appsettings.json` 放在
 > `mcp-markdown-rag.exe` 旁边。Linux/macOS 上使用正斜杠路径指向 `mcp-markdown-rag` 可执行文件。
 
+#### HTTP（Streamable HTTP 传输）
+
+在 `appsettings.json` 中把 `Transport` 设为 `Http`（并在 `TransportSettings` 下配置
+`HttpEndpointUrl` / `HttpRoutePrefix` / `Stateless`），然后直接运行 exe。服务器会监听配置的 URL，
+并在根路径（或 `HttpRoutePrefix` 指定的子路径如 `/mcp`）暴露 MCP Streamable HTTP 端点。
+
+```jsonc
+{
+  "MarkdownRag": {
+    "Transport": "Http",
+    "TransportSettings": {
+      "HttpEndpointUrl": "http://localhost:3001",
+      "HttpRoutePrefix": "",
+      "Stateless": true
+    }
+    // …其余 MarkdownRag 配置不变
+  }
+}
+```
+
+```bash
+./mcp-markdown-rag.exe        # 现在监听 http://localhost:3001
+```
+
+然后在支持 HTTP 的 MCP 宿主里指向该 URL。以 Claude Desktop（Streamable HTTP）为例：
+
+```json
+{
+  "mcpServers": {
+    "markdown_rag": {
+      "url": "http://localhost:3001"
+    }
+  }
+}
+```
+
+> **安全。** 默认 `HttpEndpointUrl` 绑定 `localhost`，仅本机可访问。若要绑定 `0.0.0.0` 或公网网卡
+> 以跨机器共享，请放到反向代理后面，由代理统一处理鉴权与 TLS，并配置 ASP.NET Core 的 `AllowedHosts`
+> 而非使用通配符。服务器本身不带鉴权，面向可信的本地/回环使用场景。
+>
+> **`Stateless` 模式。** 默认 `true`（推荐）：每个 HTTP 请求相互独立，服务器不保留会话状态，也不会
+> 向客户端发起请求。仅当客户端需要采样/elicitation 回调时才设为 `false`，本服务器不使用此类回调。
+
 #### Claude Desktop / Windsurf / Cursor（dotnet run 方式）
 
 ```json
@@ -505,8 +643,10 @@ dotnet publish -c Release -r win-x64 --self-contained false
 npx @modelcontextprotocol/inspector
 ```
 
-在 inspector 里打开 **Add Server** 填写字段。本服务是本地 stdio 进程，所以把
-**Transport Type** 选为 `STDIO`。其余字段如下：
+在 inspector 里打开 **Add Server** 填写字段。本服务同时支持 stdio（本地进程）和 Streamable
+HTTP —— 选择对应的 **Transport Type**。
+
+**Stdio** —— 把 **Transport Type** 选为 `STDIO`。其余字段如下：
 
 | 字段 | 填什么 |
 |------|--------|
@@ -514,6 +654,11 @@ npx @modelcontextprotocol/inspector
 | **Command** | 启动服务器的可执行命令（见下方三种方式） |
 | **Arguments** | 传给命令的参数，每行一个。直接用 `.exe` 时留空。 |
 | **Environment Variables** | 额外环境变量（键值对）。本服务不需要，留空。 |
+
+**HTTP** —— 把 **Transport Type** 选为 `STREAMABLE HTTP`，然后指向已运行的服务器。
+
+- **URL**：`http://localhost:3001/`（即你配置的 `HttpEndpointUrl` + `HttpRoutePrefix`；需先用
+  `Transport=Http` 启动服务器）。
 
 从下面三种启动方式中选一种：
 

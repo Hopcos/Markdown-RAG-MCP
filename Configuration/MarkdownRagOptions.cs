@@ -8,6 +8,14 @@ public sealed class MarkdownRagOptions
 {
     public const string SectionName = "MarkdownRag";
 
+    /// <summary>
+    /// Which MCP transport to expose: "Stdio" (default, for child-process hosts like
+    /// Claude Desktop/Cursor) or "Http" (Streamable HTTP, for network hosts).
+    /// </summary>
+    public string Transport { get; set; } = "Stdio";
+
+    public TransportOptions TransportSettings { get; set; } = new();
+
     /// <summary>Directory holding the tracking file and persisted vector store.</summary>
     public string DatabasePath { get; set; } = "./.db";
 
@@ -66,4 +74,19 @@ public sealed class IndexingOptions
 {
     /// <summary>Number of documents embedded per batch to balance CPU and memory use.</summary>
     public int BatchSize { get; set; } = 32;
+}
+
+public sealed class TransportOptions
+{
+    /// <summary>URL prefix the Streamable HTTP server binds to when Transport is "Http".</summary>
+    public string HttpEndpointUrl { get; set; } = "http://localhost:3001";
+
+    /// <summary>Route prefix for the MCP HTTP endpoint (empty means the root "/").</summary>
+    public string HttpRoutePrefix { get; set; } = "";
+
+    /// <summary>
+    /// Stateless mode (recommended for servers that don't issue server-to-client requests
+    /// like sampling/elicitation). Set false only if a client needs server-initiated requests.
+    /// </summary>
+    public bool Stateless { get; set; } = true;
 }

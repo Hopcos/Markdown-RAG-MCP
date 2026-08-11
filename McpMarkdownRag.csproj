@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <PackageReference Include="ModelContextProtocol" Version="1.0.0" />
+    <!-- Streamable HTTP transport (Kestrel-based) when Transport=Http is selected. -->
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.10" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.10" />
 
