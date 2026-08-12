@@ -6,6 +6,7 @@ using MarkdownRagMcp.Embeddings;
 using MarkdownRagMcp.Services;
 using MarkdownRagMcp.Storage;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -68,6 +69,18 @@ static async Task RunHttpAsync(string[] args)
         .Get<MarkdownRagMcfg.MarkdownRagOptions>()?.TransportSettings
         ?? new MarkdownRagMcfg.TransportOptions();
 
+    // When hosted under IIS/ANCM (in-process or out-of-process) the endpoint is supplied by
+    // the host and the address list is made read-only once the pipeline is built, so calling
+    // app.Run(url) throws "Changing the URL is not supported because Addresses IsReadOnly".
+    // Applying the configured URL on the host builder here instead: self-hosted runs still
+    // bind to the configured endpoint, while IIS runs use the ANCM-supplied address and the
+    // code never mutates the read-only list.
+    var hostedByAncm = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_IIS_PHYSICAL_PATH"));
+    if (!hostedByAncm && !string.IsNullOrWhiteSpace(transportSettings.HttpEndpointUrl))
+    {
+        builder.WebHost.UseUrls(transportSettings.HttpEndpointUrl);
+    }
+
     builder.Services
         .AddMcpServer(ConfigureMcpServer)
         .WithHttpTransport(options =>
@@ -84,7 +97,7 @@ static async Task RunHttpAsync(string[] args)
     // mount it under a subpath (e.g. "/mcp") instead of the root.
     app.MapMcp(string.IsNullOrEmpty(transportSettings.HttpRoutePrefix) ? "" : transportSettings.HttpRoutePrefix);
 
-    app.Run(transportSettings.HttpEndpointUrl);
+    app.Run();
 }
 
 // ---------------------------------------------------------------------------
