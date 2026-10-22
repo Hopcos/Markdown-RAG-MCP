@@ -25,6 +25,10 @@ in via DI without touching call sites.
 ✅ **Docker & docker compose ready** — one image, environment-variable configuration,
 volume-backed index database and model cache (see [Docker deployment](#docker-deployment)).
 
+✅ **REST-ready web SDK** — the project builds on `Microsoft.NET.Sdk.Web` (the ASP.NET Core
+framework reference is built in), so a future REST API surface — Swagger UI, static files,
+minimal-API endpoints — can be added without restructuring the project.
+
 ## Tools
 
 The server exposes three tools, identical in semantics to the original:

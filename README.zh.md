@@ -22,6 +22,10 @@ HTTP 服务运行，通过 `appsettings.json` 一键切换。
 ✅ **Docker & docker compose 就绪** — 一个镜像、环境变量配置、卷挂载的索引数据库与模型
 缓存（见 [Docker 部署](#docker-部署)）。
 
+✅ **面向 REST 的 Web SDK 基座** — 项目构建于 `Microsoft.NET.Sdk.Web`（内建 ASP.NET Core
+框架引用），后期添加 REST API 面——Swagger UI、静态文件、最小 API 端点——无需重构项目
+结构。
+
 ## 工具
 
 服务器暴露三个工具，语义与原版一致：

@@ -25,3 +25,4 @@ logs/
 
 # Local configuration overrides (may contain credentials).
 **/appsettings.Development.json
+**/appsettings.hopcos.json

@@ -5,6 +5,9 @@ using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using Microsoft.ML.Tokenizers;
+// Disambiguate from Microsoft.AspNetCore.Builder.SessionOptions, which the Web SDK's
+// implicit usings bring into scope.
+using SessionOptions = Microsoft.ML.OnnxRuntime.SessionOptions;
 
 namespace MarkdownRagMcp.Embeddings;
 
