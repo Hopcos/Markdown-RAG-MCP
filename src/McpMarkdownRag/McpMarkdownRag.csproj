@@ -36,18 +36,6 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <Compile Remove="tests\**" />
-    <None Remove="tests\**" />
   </ItemGroup>
-
-  <PropertyGroup>
-    <!-- The Web SDK (via Razor -> StaticWebAssets -> StaticAssets.ProjectSystem.props) globs every
-         *.config/*.json recursively into @(Content) with CopyToOutputDirectory=PreserveNewest. The SDK's
-         default excludes only cover this project's own bin/obj folders, so the tests project's bin/obj
-         output JSON files get globbed as content, assigned solution-relative TargetPaths, and copied
-         into both projects' output folders, where they re-glob and grow ~2 levels per build. Exclude
-         them via the documented Web SDK content-glob knob to break the loop at its source. -->
-    <DefaultWebContentItemExcludes>$(DefaultWebContentItemExcludes);tests\McpMarkdownRag.Tests\bin\**;tests\McpMarkdownRag.Tests\obj\**</DefaultWebContentItemExcludes>
-  </PropertyGroup>
 
 </Project>

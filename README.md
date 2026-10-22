@@ -55,7 +55,7 @@ The server responds with the same message strings as the Python original:
 
 ### 1. Configure
 
-All configuration is fixed in [`appsettings.json`](appsettings.json) under the `MarkdownRag`
+All configuration is fixed in [`appsettings.json`](src/McpMarkdownRag/appsettings.json) under the `MarkdownRag`
 section — there is no command-line surface:
 
 ```jsonc
@@ -129,9 +129,9 @@ section — there is no command-line surface:
 ### 2. Run
 
 ```bash
-dotnet run                          # stdio server (default)
+dotnet run --project src/McpMarkdownRag   # stdio server (default)
 # or
-dotnet publish -c Release -r win-x64 --self-contained false
+dotnet publish src/McpMarkdownRag -c Release -r win-x64 --self-contained false
 # exe: bin/Release/net10.0/win-x64/publish/mcp-markdown-rag.exe
 ```
 
@@ -162,7 +162,7 @@ On Linux/macOS use a forward-slash path to the binary.
   "mcpServers": {
     "markdown_rag": {
       "command": "dotnet",
-      "args": ["run", "--project", "/ABSOLUTE/PATH/TO/Markdown-RAG-MCP-Dotnet", "-c", "Release"]
+      "args": ["run", "--project", "/ABSOLUTE/PATH/TO/Markdown-RAG-MCP-Dotnet/src/McpMarkdownRag", "-c", "Release"]
     }
   }
 }
@@ -362,16 +362,16 @@ dotnet test tests/McpMarkdownRag.Tests --collect "XPlat,Code Coverage"
 
 | Area | File(s) | Purpose |
 |------|---------|---------|
-| Host | `Program.cs` | Host + DI wiring; stdio *or* Streamable HTTP transport, logging→stderr |
-| Tools | `Tools/MarkdownRagTools.cs` | Thin MCP tool adapters (`[McpServerTool]` methods) |
-| Orchestration | `Services/MarkdownRagService.cs` | Indexing/search orchestration |
-| Preload | `Services/EmbeddingPreloadHostedService.cs` | Background model preload at startup |
-| Abstractions | `Abstractions/*.cs` | `IEmbeddingProvider`, `IVectorStore`, `IMarkdownChunker`, `IIndexTracker`, `IMarkdownFileDiscovery`, `ITextTokenizer` |
-| Chunking | `Chunking/MarkdownChunker.cs` | Heading split → token split (512 / 100 overlap) |
-| Embeddings | `Embeddings/*.cs` | ONNX embedding provider + BERT tokenizer + model downloader |
-| Storage | `Storage/*.cs` | In-memory vector store, JSON index tracker, file discovery |
-| Security | `Security/BearerTokenMiddleware.cs` | Optional `server-token` bearer gate over every HTTP request |
-| Config | `Configuration/`, `appsettings.json` | Strongly-typed appsettings options |
+| Host | `src/McpMarkdownRag/Program.cs` | Host + DI wiring; stdio *or* Streamable HTTP transport, logging→stderr |
+| Tools | `src/McpMarkdownRag/Tools/MarkdownRagTools.cs` | Thin MCP tool adapters (`[McpServerTool]` methods) |
+| Orchestration | `src/McpMarkdownRag/Services/MarkdownRagService.cs` | Indexing/search orchestration |
+| Preload | `src/McpMarkdownRag/Services/EmbeddingPreloadHostedService.cs` | Background model preload at startup |
+| Abstractions | `src/McpMarkdownRag/Abstractions/*.cs` | `IEmbeddingProvider`, `IVectorStore`, `IMarkdownChunker`, `IIndexTracker`, `IMarkdownFileDiscovery`, `ITextTokenizer` |
+| Chunking | `src/McpMarkdownRag/Chunking/MarkdownChunker.cs` | Heading split → token split (512 / 100 overlap) |
+| Embeddings | `src/McpMarkdownRag/Embeddings/*.cs` | ONNX embedding provider + BERT tokenizer + model downloader |
+| Storage | `src/McpMarkdownRag/Storage/*.cs` | In-memory vector store, JSON index tracker, file discovery |
+| Security | `src/McpMarkdownRag/Security/BearerTokenMiddleware.cs` | Optional `server-token` bearer gate over every HTTP request |
+| Config | `src/McpMarkdownRag/Configuration/`, `src/McpMarkdownRag/appsettings.json` | Strongly-typed appsettings options |
 | Tests | `tests/McpMarkdownRag.Tests/` | Unit + full-link integration tests (TestServer) |
 | Docker | `Dockerfile`, `docker-compose.yml`, `.dockerignore` | Container deployment |
 

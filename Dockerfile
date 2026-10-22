@@ -7,13 +7,13 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Restore first (layer caching): copy only the project file.
-COPY ["McpMarkdownRag.csproj", "McpMarkdownRag.slnx", "./"]
-RUN dotnet restore "McpMarkdownRag.csproj"
+COPY ["src/McpMarkdownRag/McpMarkdownRag.csproj", "src/McpMarkdownRag/"]
+RUN dotnet restore "src/McpMarkdownRag/McpMarkdownRag.csproj"
 
-# Publish the application (tests folder is excluded from the build in the csproj
-# and from the docker context via .dockerignore).
-COPY . .
-RUN dotnet publish "McpMarkdownRag.csproj" \
+# Publish the application (tests folder lives outside src/ and is excluded
+# from the docker context via .dockerignore).
+COPY src/ src/
+RUN dotnet publish "src/McpMarkdownRag/McpMarkdownRag.csproj" \
     -c Release \
     -o /app/publish \
     /p:UseAppHost=false \

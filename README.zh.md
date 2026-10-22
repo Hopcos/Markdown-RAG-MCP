@@ -52,7 +52,7 @@ HTTP 服务运行，通过 `appsettings.json` 一键切换。
 
 ### 1. 配置
 
-全部配置集中管理于 [`appsettings.json`](appsettings.json) 的 `MarkdownRag` 节——不提供
+全部配置集中管理于 [`appsettings.json`](src/McpMarkdownRag/appsettings.json) 的 `MarkdownRag` 节——不提供
 命令行配置面：
 
 ```jsonc
@@ -122,9 +122,9 @@ HTTP 服务运行，通过 `appsettings.json` 一键切换。
 ### 2. 运行
 
 ```bash
-dotnet run                          # 默认 stdio 服务器
+dotnet run --project src/McpMarkdownRag   # 默认 stdio 服务器
 # 或
-dotnet publish -c Release -r win-x64 --self-contained false
+dotnet publish src/McpMarkdownRag -c Release -r win-x64 --self-contained false
 # exe: bin/Release/net10.0/win-x64/publish/mcp-markdown-rag.exe
 ```
 
@@ -154,7 +154,7 @@ Linux/macOS 上使用指向二进制的正斜杠路径。
   "mcpServers": {
     "markdown_rag": {
       "command": "dotnet",
-      "args": ["run", "--project", "/绝对路径/Markdown-RAG-MCP-Dotnet", "-c", "Release"]
+      "args": ["run", "--project", "/绝对路径/Markdown-RAG-MCP-Dotnet/src/McpMarkdownRag", "-c", "Release"]
     }
   }
 }
@@ -348,16 +348,16 @@ dotnet test tests/McpMarkdownRag.Tests --collect "XPlat,Code Coverage"
 
 | 区域 | 文件 | 职责 |
 |------|------|------|
-| 宿主 | `Program.cs` | 宿主 + DI 装配；stdio *或* Streamable HTTP 传输、日志重定向到 stderr |
-| 工具 | `Tools/MarkdownRagTools.cs` | 轻薄的 MCP 工具适配器（`[McpServerTool]` 方法） |
-| 编排 | `Services/MarkdownRagService.cs` | 索引/搜索编排 |
-| 预加载 | `Services/EmbeddingPreloadHostedService.cs` | 启动时后台模型预加载 |
-| 抽象 | `Abstractions/*.cs` | `IEmbeddingProvider`、`IVectorStore`、`IMarkdownChunker`、`IIndexTracker`、`IMarkdownFileDiscovery`、`ITextTokenizer` |
-| 分块 | `Chunking/MarkdownChunker.cs` | 标题切分 → 令牌切分（512 / 100 重叠） |
-| 嵌入 | `Embeddings/*.cs` | ONNX 嵌入提供者 + BERT 分词器 + 模型下载器 |
-| 存储 | `Storage/*.cs` | 内存向量存储、JSON 索引跟踪、文件发现 |
-| 安全 | `Security/BearerTokenMiddleware.cs` | 面向每个 HTTP 请求的可选 `server-token` Bearer 门 |
-| 配置 | `Configuration/`、`appsettings.json` | 强类型 appsettings 选项 |
+| 宿主 | `src/McpMarkdownRag/Program.cs` | 宿主 + DI 装配；stdio *或* Streamable HTTP 传输、日志重定向到 stderr |
+| 工具 | `src/McpMarkdownRag/Tools/MarkdownRagTools.cs` | 轻薄的 MCP 工具适配器（`[McpServerTool]` 方法） |
+| 编排 | `src/McpMarkdownRag/Services/MarkdownRagService.cs` | 索引/搜索编排 |
+| 预加载 | `src/McpMarkdownRag/Services/EmbeddingPreloadHostedService.cs` | 启动时后台模型预加载 |
+| 抽象 | `src/McpMarkdownRag/Abstractions/*.cs` | `IEmbeddingProvider`、`IVectorStore`、`IMarkdownChunker`、`IIndexTracker`、`IMarkdownFileDiscovery`、`ITextTokenizer` |
+| 分块 | `src/McpMarkdownRag/Chunking/MarkdownChunker.cs` | 标题切分 → 令牌切分（512 / 100 重叠） |
+| 嵌入 | `src/McpMarkdownRag/Embeddings/*.cs` | ONNX 嵌入提供者 + BERT 分词器 + 模型下载器 |
+| 存储 | `src/McpMarkdownRag/Storage/*.cs` | 内存向量存储、JSON 索引跟踪、文件发现 |
+| 安全 | `src/McpMarkdownRag/Security/BearerTokenMiddleware.cs` | 面向每个 HTTP 请求的可选 `server-token` Bearer 门 |
+| 配置 | `src/McpMarkdownRag/Configuration/`、`src/McpMarkdownRag/appsettings.json` | 强类型 appsettings 选项 |
 | 测试 | `tests/McpMarkdownRag.Tests/` | 单元 + 全链路集成测试（TestServer） |
 | Docker | `Dockerfile`、`docker-compose.yml`、`.dockerignore` | 容器部署 |
 

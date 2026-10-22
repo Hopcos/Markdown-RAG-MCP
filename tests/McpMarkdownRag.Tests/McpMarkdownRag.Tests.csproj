@@ -21,7 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\McpMarkdownRag.csproj" />
+    <ProjectReference Include="..\..\src\McpMarkdownRag\McpMarkdownRag.csproj" />
   </ItemGroup>
 
 </Project>

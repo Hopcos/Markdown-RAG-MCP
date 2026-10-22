@@ -8,7 +8,7 @@
     <File Path="README.zh.md" />
   </Folder>
   <Folder Name="/src/">
-    <Project Path="McpMarkdownRag.csproj" />
+    <Project Path="src/McpMarkdownRag/McpMarkdownRag.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/McpMarkdownRag.Tests/McpMarkdownRag.Tests.csproj" />
