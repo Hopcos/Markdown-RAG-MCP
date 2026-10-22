@@ -9,6 +9,20 @@ public sealed class MarkdownRagOptions
     public const string SectionName = "MarkdownRag";
 
     /// <summary>
+    /// Root-level configuration key holding the optional server bearer token (see
+    /// <see cref="MarkdownRagMcp.Security.BearerTokenMiddleware"/>). When the value is
+    /// non-empty, every HTTP request must carry a matching credential.
+    /// </summary>
+    public const string ServerTokenKey = "server-token";
+
+    /// <summary>
+    /// Fallback configuration key for the bearer token ("ServerToken" also binds from the
+    /// SERVER_TOKEN / ServerToken environment variable conveniently on every platform —
+    /// Windows environment variable names cannot contain the dash of "server-token").
+    /// </summary>
+    public const string ServerTokenFallbackKey = "ServerToken";
+
+    /// <summary>
     /// Which MCP transport to expose: "Stdio" (default, for child-process hosts like
     /// Claude Desktop/Cursor) or "Http" (Streamable HTTP, for network hosts).
     /// </summary>

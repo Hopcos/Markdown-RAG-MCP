@@ -53,6 +53,11 @@ HTTP 服务运行，通过 `appsettings.json` 一键切换。
 
 ```jsonc
 {
+  // 可选的 Bearer 令牌，保护每一个 HTTP 请求（/mcp 端点）。
+  // 非空 => 请求必须携带 "Authorization: Bearer <value>"。
+  // 环境变量覆盖："server-token"（或 "ServerToken"）。留空则关闭鉴权。
+  "server-token": "",
+
   "MarkdownRag": {
     "Transport": "Stdio",                        // "Stdio"（默认）或 "Http"（Streamable HTTP）
     "TransportSettings": {
@@ -88,6 +93,7 @@ HTTP 服务运行，通过 `appsettings.json` 一键切换。
 > MarkdownRag__TransportSettings__Stateless="true"
 > MarkdownRag__DatabasePath="/app/.db"
 > MarkdownRag__Embedding__ModelCachePath="/app/.models/embeddings"
+> ServerToken="my-secret"        # 根级 "server-token" 的 Windows 友好别名
 > ```
 
 > **首次运行** — 嵌入模型（`model.onnx` + `vocab.txt`，约 90 MB）会自动从 Hugging Face
@@ -164,9 +170,41 @@ Linux/macOS 上使用指向二进制的正斜杠路径。
 }
 ```
 
+若服务器配置了令牌（见[鉴权](#鉴权)），HTTP 宿主经请求头携带令牌，例如 Claude Code：
+
+```json
+{
+  "mcpServers": {
+    "markdown_rag": {
+      "type": "http",
+      "url": "http://localhost:3001/mcp",
+      "headers": { "Authorization": "Bearer my-secret" }
+    }
+  }
+}
+```
+
+### 鉴权
+
+当根级 `server-token` 配置值**非空**时，每一个 HTTP 请求（CORS 预检除外）都必须携带令牌；
+留空则完全关闭鉴权：
+
+```bash
+curl -H "Authorization: Bearer my-secret" http://localhost:3001/mcp
+```
+
+令牌凭据接受 `Authorization: Bearer <token>` 请求头，或面向浏览器发起的 GET 请求的
+`?access_token=<token>` 查询参数。缺失或错误的凭据返回 `401 Unauthorized`，附
+`WWW-Authenticate: Bearer` 与载荷 `{"error":"UNAUTHORIZED","message":"Invalid authorization: ..."}`。
+令牌比较为恒时操作（SHA-256 摘要，无时序侧信道）。
+
+> 配置位于 appsettings 根级：`"server-token": ""`。可用环境变量 `server-token`
+> （Docker/Linux）或 `ServerToken`（Windows 宿主——环境变量名不允许包含连字符）覆盖。
+
 > **安全。** 默认 `HttpEndpointUrl` 绑定 `localhost`，服务器仅本机可达。若要绑定
-> `0.0.0.0`（或容器端口）对外共享，请放在强制认证与 TLS 的反向代理之后。服务器自身不
-> 提供内置鉴权，仅面向可信的本机/回环或经代理的部署。
+> `0.0.0.0`（或容器端口）对外共享，请启用内置 Bearer 令牌门（[鉴权](#鉴权)）和/或放在强制
+> TLS 的反向代理之后。stdio 传输（MCP 宿主注册的可信子进程）不经过 HTTP 管道，因此不受
+> 令牌门影响。
 
 ### 4. 用 MCP inspector 调试
 
@@ -239,6 +277,7 @@ docker compose up -d --build
 | `MarkdownRag__TransportSettings__Stateless` | `true` | HTTP 请求相互独立 |
 | `MarkdownRag__DatabasePath` | `/app/.db` | 卷挂载的索引数据库 |
 | `MarkdownRag__Embedding__ModelCachePath` | `/app/.models/embeddings` | 卷挂载的模型缓存 |
+| `server-token` | `${MCP_SERVER_TOKEN:-}` | 保护每一个 `/mcp` 请求的可选 Bearer 令牌（留空关闭鉴权） |
 
 卷（在 compose 项目目录下创建）：
 
@@ -248,7 +287,8 @@ docker compose up -d --build
 - `./docs` → `/data/docs`（可选，默认注释掉）— 挂载你的 markdown 语料后可用
   `current_working_directory=/data/docs`（+ `directory=<子目录>`）索引。
 
-部署后的 MCP 端点：`http://<host>:8080/mcp`。
+部署后的 MCP 端点：`http://<host>:8080/mcp`。配置了令牌时，可用
+`curl -H "Authorization: Bearer $MCP_SERVER_TOKEN" http://localhost:8080/mcp` 验证。
 
 ### 手动 docker 构建
 
@@ -261,6 +301,7 @@ docker run -d --name mcp-markdown-rag -p 8080:8080 \
   -e MarkdownRag__TransportSettings__Stateless=true \
   -e MarkdownRag__DatabasePath=/app/.db \
   -e MarkdownRag__Embedding__ModelCachePath=/app/.models/embeddings \
+  -e server-token=my-secret \
   -v "$PWD/db:/app/.db" \
   -v "$PWD/hf-models:/app/.models/embeddings" \
   -v "$PWD/docs:/data/docs" \
@@ -282,7 +323,9 @@ TestServer 的真实 `/mcp` 端点）：
 | 单元 | `tests/McpMarkdownRag.Tests/Unit/MarkdownChunkerTests.cs` | 标题切分 + 带重叠的按令牌二次切分、空输入处理 |
 | 单元 | `tests/McpMarkdownRag.Tests/Unit/StorageTests.cs` | md5+mtime 指纹、JSON 跟踪持久化、文件发现（递归模式跳过点号目录）、向量存储插入/搜索/删除/丢弃 |
 | 单元 | `tests/McpMarkdownRag.Tests/Unit/MarkdownRagServiceTests.cs` | 用确定性假嵌入提供者 + 内存 mock 文件系统跑全生命周期：不存在目录的消息、增量→无事可做、搜索输出、全量重建、清空 |
+| 单元 | `tests/McpMarkdownRag.Tests/Security/BearerTokenMiddlewareTests.cs` | `server-token` 为空/缺失时鉴权关闭；接受 Bearer 头与 `?access_token=`；错误/畸形/缺失凭据 → 401 契约载荷；CORS 预检放行；恒时比较 |
 | 集成 | `tests/McpMarkdownRag.Tests/Integration/McpIntegrationTests.cs` | 真实 `/mcp` Streamable HTTP 契约：`initialize`（serverInfo + instructions）、`tools/list`（三个工具）、完整的 `index_documents` → `search_documents` → `clear_index` 流程（含原版消息字符串），外加 DI 装配健全性检查 |
+| 集成 | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | 开启鉴权的服务器夹具：无凭据与错误令牌的 MCP 请求 → 401 契约载荷；有效 Bearer 令牌完成 MCP 会话初始化并到达 `tools/list` |
 
 集成夹具把 ONNX 管道替换为确定性 `FakeEmbeddingProvider`（BERT 分词器同理替换为轻量
 实现），测试全程无模型下载、无网络访问。一键运行全部测试：
@@ -309,6 +352,7 @@ dotnet test tests/McpMarkdownRag.Tests --collect "XPlat,Code Coverage"
 | 分块 | `Chunking/MarkdownChunker.cs` | 标题切分 → 令牌切分（512 / 100 重叠） |
 | 嵌入 | `Embeddings/*.cs` | ONNX 嵌入提供者 + BERT 分词器 + 模型下载器 |
 | 存储 | `Storage/*.cs` | 内存向量存储、JSON 索引跟踪、文件发现 |
+| 安全 | `Security/BearerTokenMiddleware.cs` | 面向每个 HTTP 请求的可选 `server-token` Bearer 门 |
 | 配置 | `Configuration/`、`appsettings.json` | 强类型 appsettings 选项 |
 | 测试 | `tests/McpMarkdownRag.Tests/` | 单元 + 全链路集成测试（TestServer） |
 | Docker | `Dockerfile`、`docker-compose.yml`、`.dockerignore` | 容器部署 |

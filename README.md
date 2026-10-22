@@ -56,6 +56,11 @@ section — there is no command-line surface:
 
 ```jsonc
 {
+  // Optional bearer token protecting EVERY HTTP request (the /mcp endpoint).
+  // Non-empty => requests must send "Authorization: Bearer <value>".
+  // Environment override: "server-token" (or "ServerToken"). Empty disables auth.
+  "server-token": "",
+
   "MarkdownRag": {
     "Transport": "Stdio",                        // "Stdio" (default) or "Http" (Streamable HTTP)
     "TransportSettings": {
@@ -92,6 +97,7 @@ section — there is no command-line surface:
 > MarkdownRag__TransportSettings__Stateless="true"
 > MarkdownRag__DatabasePath="/app/.db"
 > MarkdownRag__Embedding__ModelCachePath="/app/.models/embeddings"
+> ServerToken="my-secret"        # Windows-friendly alias of root-level "server-token"
 > ```
 
 > **First run** — the embedding model (`model.onnx` + `vocab.txt`, ~90 MB) is downloaded
@@ -172,10 +178,40 @@ Set `Transport=Http` and point an HTTP-capable MCP host at the endpoint, e.g. Cl
 }
 ```
 
-> **Security.** The default `HttpEndpointUrl` binds to `localhost`, so the server is only
-> reachable from the same machine. If you bind to `0.0.0.0` (or a container port) to share
-> it, put it behind a reverse proxy that enforces authentication and TLS. The server itself
-> has no built-in auth — it is intended for trusted local/loopback or proxied deployments.
+When the server requires a token (see [Authentication](#authentication)), HTTP hosts deliver
+it via a header, e.g. Claude Code:
+
+```json
+{
+  "mcpServers": {
+    "markdown_rag": {
+      "type": "http",
+      "url": "http://localhost:3001/mcp",
+      "headers": { "Authorization": "Bearer my-secret" }
+    }
+  }
+}
+```
+
+### Authentication
+
+When the root-level `server-token` configuration value is **non-empty**, every HTTP request
+(except CORS preflights) must present the token; when it is empty, authentication is
+disabled entirely:
+
+```bash
+curl -H "Authorization: Bearer my-secret" http://localhost:3001/mcp
+```
+
+Credentials are accepted as `Authorization: Bearer <token>` or, for browser-issued GET
+requests, as `?access_token=<token>`. A missing or incorrect credential yields
+`401 Unauthorized` with `WWW-Authenticate: Bearer` and the payload
+`{"error":"UNAUTHORIZED","message":"Invalid authorization: ..."}`. Token comparison is
+constant-time (SHA-256 digests, no timing side-chains).
+
+> Configuration lives at the appsettings root level: `"server-token": ""`. It can be
+> overridden with the environment variables `server-token` (Docker/Linux) or `ServerToken`
+> (Windows hosts, where env-var names cannot contain a dash).
 
 ### 4. Debug with the MCP inspector
 
@@ -251,6 +287,7 @@ docker compose up -d --build
 | `MarkdownRag__TransportSettings__Stateless` | `true` | Independent HTTP requests |
 | `MarkdownRag__DatabasePath` | `/app/.db` | Volume-backed index database |
 | `MarkdownRag__Embedding__ModelCachePath` | `/app/.models/embeddings` | Volume-backed model cache |
+| `server-token` | `${MCP_SERVER_TOKEN:-}` | Optional bearer token guarding every `/mcp` request (empty disables auth) |
 
 Volumes (created under the compose project directory):
 
@@ -261,7 +298,8 @@ Volumes (created under the compose project directory):
   `index_documents` can index them with
   `current_working_directory=/data/docs` (+ `directory=<subdir>`).
 
-The MCP endpoint after deployment: `http://<host>:8080/mcp`.
+The MCP endpoint after deployment: `http://<host>:8080/mcp`. When a token is configured,
+verify with `curl -H "Authorization: Bearer $MCP_SERVER_TOKEN" http://localhost:8080/mcp`.
 
 ### Manual docker build
 
@@ -274,6 +312,7 @@ docker run -d --name mcp-markdown-rag -p 8080:8080 \
   -e MarkdownRag__TransportSettings__Stateless=true \
   -e MarkdownRag__DatabasePath=/app/.db \
   -e MarkdownRag__Embedding__ModelCachePath=/app/.models/embeddings \
+  -e server-token=my-secret \
   -v "$PWD/db:/app/.db" \
   -v "$PWD/hf-models:/app/.models/embeddings" \
   -v "$PWD/docs:/data/docs" \
@@ -297,7 +336,9 @@ endpoint over TestServer):
 | Unit | `tests/McpMarkdownRag.Tests/Unit/MarkdownChunkerTests.cs` | Heading split + token re-split with overlap, empty input handling |
 | Unit | `tests/McpMarkdownRag.Tests/Unit/StorageTests.cs` | md5+mtime fingerprinting, JSON tracking persistence, file discovery (dot-prefixed dirs skipped in recursive mode), vector store insert/search/delete/drop |
 | Unit | `tests/McpMarkdownRag.Tests/Unit/MarkdownRagServiceTests.cs` | Full lifecycle with a deterministic fake embedding provider + in-memory mock filesystem: nonexistent directory message, incremental → nothing-to-do, search output, full reindex, clear |
+| Unit | `tests/McpMarkdownRag.Tests/Security/BearerTokenMiddlewareTests.cs` | Token gate disabled when `server-token` is empty/missing; bearer header + `?access_token=` accepted; wrong/malformed/missing credentials → 401 contract payload; CORS preflight exempt; constant-time comparison |
 | Integration | `tests/McpMarkdownRag.Tests/Integration/McpIntegrationTests.cs` | Real `/mcp` Streamable HTTP contract: `initialize` (serverInfo + instructions), `tools/list` (three tools), the complete `index_documents` → `search_documents` → `clear_index` flow with the original message strings, plus a DI-wiring sanity check |
+| Integration | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | Auth-enabled server fixture: credentials-less and wrong-token MCP requests → 401 with the contract payload; valid bearer token initializes the session and reaches `tools/list` |
 
 The integration fixture swaps the ONNX pipeline for a deterministic
 `FakeEmbeddingProvider` (and the BERT tokenizer for a lightweight one), so no model download
@@ -325,6 +366,7 @@ dotnet test tests/McpMarkdownRag.Tests --collect "XPlat,Code Coverage"
 | Chunking | `Chunking/MarkdownChunker.cs` | Heading split → token split (512 / 100 overlap) |
 | Embeddings | `Embeddings/*.cs` | ONNX embedding provider + BERT tokenizer + model downloader |
 | Storage | `Storage/*.cs` | In-memory vector store, JSON index tracker, file discovery |
+| Security | `Security/BearerTokenMiddleware.cs` | Optional `server-token` bearer gate over every HTTP request |
 | Config | `Configuration/`, `appsettings.json` | Strongly-typed appsettings options |
 | Tests | `tests/McpMarkdownRag.Tests/` | Unit + full-link integration tests (TestServer) |
 | Docker | `Dockerfile`, `docker-compose.yml`, `.dockerignore` | Container deployment |

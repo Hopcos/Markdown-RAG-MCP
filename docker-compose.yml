@@ -30,6 +30,10 @@ services:
       # batching, embedding dimension) fall back to the appsettings.json defaults;
       # override any of them with MarkdownRag__* environment variables, e.g.
       #   MarkdownRag__Chunking__ChunkSize: "512"
+
+      # Optional bearer token guarding every /mcp request when non-empty
+      # (Authorization: Bearer <value> / ?access_token=<value>; empty disables auth).
+      server-token: "${MCP_SERVER_TOKEN:-}"
     volumes:
       # Index database so the vector store and tracking file survive restarts.
       - ./db:/app/.db

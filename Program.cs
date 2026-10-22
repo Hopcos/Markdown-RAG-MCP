@@ -3,6 +3,7 @@ using MarkdownRagMcp.Abstractions;
 using MarkdownRagMcfg = MarkdownRagMcp.Configuration;
 using MarkdownRagMcp.Chunking;
 using MarkdownRagMcp.Embeddings;
+using MarkdownRagMcp.Security;
 using MarkdownRagMcp.Services;
 using MarkdownRagMcp.Storage;
 using Microsoft.AspNetCore.Builder;
@@ -92,6 +93,13 @@ static async Task RunHttpAsync(string[] args)
         .WithToolsFromAssembly();
 
     var app = builder.Build();
+
+    // Bearer-token authentication gate. When 'server-token' (root-level appsettings key or
+    // the ServerToken environment variable) is non-empty, every request must present
+    // 'Authorization: Bearer <token>' (or ?access_token= for browser GETs); when it is
+    // empty, authentication is disabled entirely. Registered BEFORE the MCP endpoint so
+    // /mcp — including initialize — is guarded.
+    app.UseMiddleware<BearerTokenMiddleware>();
 
     // MapMcp exposes the Streamable HTTP endpoint; the optional prefix lets callers
     // mount it under a subpath (e.g. "/mcp") instead of the root.
