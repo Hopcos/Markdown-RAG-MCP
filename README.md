@@ -25,9 +25,10 @@ in via DI without touching call sites.
 ✅ **Docker & docker compose ready** — one image, environment-variable configuration,
 volume-backed index database and model cache (see [Docker deployment](#docker-deployment)).
 
-✅ **REST-ready web SDK** — the project builds on `Microsoft.NET.Sdk.Web` (the ASP.NET Core
-framework reference is built in), so a future REST API surface — Swagger UI, static files,
-minimal-API endpoints — can be added without restructuring the project.
+✅ **Externally-exposed HTTP surface** — with `Transport=Http`, one Kestrel pipeline
+serves the MCP Streamable HTTP endpoint together with a Swagger UI (OpenAPI
+document), a read-only REST twin of the MCP discovery surface (`/api/tools`), CORS
+for browser-hosted frontends, and public discovery/health endpoints.
 
 ## Tools
 
@@ -200,8 +201,9 @@ it via a header, e.g. Claude Code:
 ### Authentication
 
 When the root-level `server-token` configuration value is **non-empty**, every HTTP request
-(except CORS preflights) must present the token; when it is empty, authentication is
-disabled entirely:
+(except CORS preflights and the intentionally public paths — the Swagger UI and its JSON
+document under `/swagger`, the root discovery endpoint `/`, and the health check `/health`)
+must present the token; when it is empty, authentication is disabled entirely:
 
 ```bash
 curl -H "Authorization: Bearer my-secret" http://localhost:3001/mcp
@@ -216,6 +218,24 @@ constant-time (SHA-256 digests, no timing side-chains).
 > Configuration lives at the appsettings root level: `"server-token": ""`. It can be
 > overridden with the environment variables `server-token` (Docker/Linux) or `ServerToken`
 > (Windows hosts, where env-var names cannot contain a dash).
+
+### HTTP web surface
+
+With `Transport=Http` the same Kestrel pipeline serves the MCP endpoint and an
+externally-exposed REST surface:
+
+| Path | Auth | Purpose |
+|------|------|---------|
+| `/mcp` (prefix configurable) | Required when `server-token` is set | The MCP Streamable HTTP endpoint (initialize, tools/list, tool calls) |
+| `/` | Public | Server discovery info: name, transport, MCP path, stateless mode, tool names, surface links |
+| `/health` | Public | Health check — answers `{"status":"ok"}` |
+| `/swagger` | Public | Swagger UI over the OpenAPI document (`/swagger/v1/swagger.json`); the Authorize dialog supplies `Bearer <server-token>` for authenticated calls |
+| `/api/tools` | Required when `server-token` is set | Read-only REST twin of the MCP discovery surface: the three tools with descriptions and typed parameter rows, resolved live from the same `[McpServerTool]` annotations `tools/list` uses |
+
+Browser-hosted frontends integrate over CORS (`AllowAnyOrigin/Method/Header`). Unhandled
+exceptions answer with the uniform error contract `{"error":"<code>","message":"..."}`:
+malformed requests → `400 BAD_REQUEST`, timeouts → `504 TIMEOUT`, anything else →
+`500 INTERNAL_ERROR`.
 
 ### 4. Debug with the MCP inspector
 
@@ -340,9 +360,10 @@ endpoint over TestServer):
 | Unit | `tests/McpMarkdownRag.Tests/Unit/MarkdownChunkerTests.cs` | Heading split + token re-split with overlap, empty input handling |
 | Unit | `tests/McpMarkdownRag.Tests/Unit/StorageTests.cs` | md5+mtime fingerprinting, JSON tracking persistence, file discovery (dot-prefixed dirs skipped in recursive mode), vector store insert/search/delete/drop |
 | Unit | `tests/McpMarkdownRag.Tests/Unit/MarkdownRagServiceTests.cs` | Full lifecycle with a deterministic fake embedding provider + in-memory mock filesystem: nonexistent directory message, incremental → nothing-to-do, search output, full reindex, clear |
-| Unit | `tests/McpMarkdownRag.Tests/Security/BearerTokenMiddlewareTests.cs` | Token gate disabled when `server-token` is empty/missing; bearer header + `?access_token=` accepted; wrong/malformed/missing credentials → 401 contract payload; CORS preflight exempt; constant-time comparison |
+| Unit | `tests/McpMarkdownRag.Tests/Security/BearerTokenMiddlewareTests.cs` | Token gate disabled when `server-token` is empty/missing; bearer header + `?access_token=` accepted; wrong/malformed/missing credentials → 401 contract payload; CORS preflight exempt; public-path exemptions (Swagger UI/document, `/`, `/health`) pass without credentials; lookalike paths stay guarded; constant-time comparison |
 | Integration | `tests/McpMarkdownRag.Tests/Integration/McpIntegrationTests.cs` | Real `/mcp` Streamable HTTP contract: `initialize` (serverInfo + instructions), `tools/list` (three tools), the complete `index_documents` → `search_documents` → `clear_index` flow with the original message strings, plus a DI-wiring sanity check |
-| Integration | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | Auth-enabled server fixture: credentials-less and wrong-token MCP requests → 401 with the contract payload; valid bearer token initializes the session and reaches `tools/list` |
+| Integration | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | Auth-enabled server fixture: credentials-less and wrong-token MCP requests → 401 with the contract payload; valid bearer token initializes the session and reaches `tools/list`; the `/api/tools` twin answers 401 without credentials while `/`, `/health` and `/swagger` stay public |
+| Integration | `tests/McpMarkdownRag.Tests/Integration/WebSurfaceIntegrationTests.cs` | Public HTTP surface end-to-end: root info + `/health` payload, public Swagger document describing `/api/tools`, and the live `/api/tools` catalog (three tools, typed parameter rows with required/optional) |
 
 The integration fixture swaps the ONNX pipeline for a deterministic
 `FakeEmbeddingProvider` (and the BERT tokenizer for a lightweight one), so no model download
@@ -370,7 +391,8 @@ dotnet test tests/McpMarkdownRag.Tests --collect "XPlat,Code Coverage"
 | Chunking | `src/McpMarkdownRag/Chunking/MarkdownChunker.cs` | Heading split → token split (512 / 100 overlap) |
 | Embeddings | `src/McpMarkdownRag/Embeddings/*.cs` | ONNX embedding provider + BERT tokenizer + model downloader |
 | Storage | `src/McpMarkdownRag/Storage/*.cs` | In-memory vector store, JSON index tracker, file discovery |
-| Security | `src/McpMarkdownRag/Security/BearerTokenMiddleware.cs` | Optional `server-token` bearer gate over every HTTP request |
+| Security | `src/McpMarkdownRag/Security/BearerTokenMiddleware.cs` | Optional `server-token` bearer gate over every HTTP request (public-path exemptions included) |
+| API | `src/McpMarkdownRag/Api/MarkdownRagApiEndpoints.cs` | Read-only REST twin of the MCP discovery surface (`/api/tools`) |
 | Config | `src/McpMarkdownRag/Configuration/`, `src/McpMarkdownRag/appsettings.json` | Strongly-typed appsettings options |
 | Tests | `tests/McpMarkdownRag.Tests/` | Unit + full-link integration tests (TestServer) |
 | Docker | `Dockerfile`, `docker-compose.yml`, `.dockerignore` | Container deployment |

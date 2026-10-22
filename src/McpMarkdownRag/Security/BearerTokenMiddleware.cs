@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using MarkdownRagMcp.Domain;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -12,7 +13,10 @@ namespace MarkdownRagMcp.Security;
 /// When the <c>server-token</c> configuration value (appsettings.json root level, or the
 /// environment variable <c>server-token</c> / <c>ServerToken</c>) is non-empty, every request
 /// must present a matching credential: <c>Authorization: Bearer &lt;token&gt;</c> — except
-/// CORS preflight (OPTIONS) requests, which are sent by browsers without custom headers. GET
+/// CORS preflight (OPTIONS) requests, which are sent by browsers without custom headers,
+/// and the intentionally public paths: the Swagger UI and its JSON document under
+/// /swagger, the root discovery endpoint (/) and the health check (/health), so the
+/// interactive explorer opens in a browser without providing credentials first. GET
 /// requests may alternatively carry <c>?access_token=&lt;token&gt;</c>. A missing or incorrect
 /// credential yields 401 with <c>WWW-Authenticate: Bearer</c> and a JSON error payload.
 /// </para>
@@ -68,6 +72,15 @@ public sealed class BearerTokenMiddleware
             return;
         }
 
+        // Swagger UI and its JSON document, root discovery, and health check are intentionally public.
+        if (context.Request.Path.StartsWithSegments("/swagger", StringComparison.OrdinalIgnoreCase) ||
+            context.Request.Path.Value == "/" ||
+            context.Request.Path.StartsWithSegments("/health", StringComparison.OrdinalIgnoreCase))
+        {
+            await _next(context).ConfigureAwait(false);
+            return;
+        }
+
         if (IsAuthorized(context.Request))
         {
             await _next(context).ConfigureAwait(false);
@@ -81,11 +94,9 @@ public sealed class BearerTokenMiddleware
 
         context.Response.StatusCode = StatusCodes.Status401Unauthorized;
         context.Response.Headers.WWWAuthenticate = "Bearer";
-        await context.Response.WriteAsJsonAsync(new
-        {
-            error = "UNAUTHORIZED",
-            message = "Invalid authorization: this server requires the header 'Authorization: Bearer <server-token>'."
-        }).ConfigureAwait(false);
+        await context.Response.WriteAsJsonAsync(new ErrorResponse(
+            "UNAUTHORIZED",
+            "Invalid authorization: this server requires the header 'Authorization: Bearer <server-token>'.")).ConfigureAwait(false);
     }
 
     private bool IsAuthorized(HttpRequest request)

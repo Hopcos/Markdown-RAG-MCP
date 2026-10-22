@@ -22,9 +22,9 @@ HTTP 服务运行，通过 `appsettings.json` 一键切换。
 ✅ **Docker & docker compose 就绪** — 一个镜像、环境变量配置、卷挂载的索引数据库与模型
 缓存（见 [Docker 部署](#docker-部署)）。
 
-✅ **面向 REST 的 Web SDK 基座** — 项目构建于 `Microsoft.NET.Sdk.Web`（内建 ASP.NET Core
-框架引用），后期添加 REST API 面——Swagger UI、静态文件、最小 API 端点——无需重构项目
-结构。
+✅ **对外暴露的 HTTP 面** — `Transport=Http` 时，同一条 Kestrel 管线同时承载 MCP
+Streamable HTTP 端点、Swagger UI（OpenAPI 文档）、MCP 发现面的只读 REST 孪生
+（`/api/tools`）、面向浏览器宿主前端的 CORS，以及公开的发现/健康端点。
 
 ## 工具
 
@@ -190,8 +190,9 @@ Linux/macOS 上使用指向二进制的正斜杠路径。
 
 ### 鉴权
 
-当根级 `server-token` 配置值**非空**时，每一个 HTTP 请求（CORS 预检除外）都必须携带令牌；
-留空则完全关闭鉴权：
+当根级 `server-token` 配置值**非空**时，每一个 HTTP 请求（CORS 预检与刻意公开的路径
+除外——`/swagger` 下的 Swagger UI 与其 JSON 文档、根发现端点 `/`、健康检查 `/health`）
+都必须携带令牌；留空则完全关闭鉴权：
 
 ```bash
 curl -H "Authorization: Bearer my-secret" http://localhost:3001/mcp
@@ -209,6 +210,22 @@ curl -H "Authorization: Bearer my-secret" http://localhost:3001/mcp
 > `0.0.0.0`（或容器端口）对外共享，请启用内置 Bearer 令牌门（[鉴权](#鉴权)）和/或放在强制
 > TLS 的反向代理之后。stdio 传输（MCP 宿主注册的可信子进程）不经过 HTTP 管道，因此不受
 > 令牌门影响。
+
+### HTTP Web 面
+
+`Transport=Http` 时，同一条 Kestrel 管线同时承载 MCP 端点与对外暴露的 REST 面：
+
+| 路径 | 鉴权 | 用途 |
+|------|------|------|
+| `/mcp`（前缀可配置） | `server-token` 非空时必填 | MCP Streamable HTTP 端点（initialize、tools/list、工具调用） |
+| `/` | 公开 | 服务器发现信息：名称、传输层、MCP 路径、无状态模式、工具名与各面链接 |
+| `/health` | 公开 | 健康检查——返回 `{"status":"ok"}` |
+| `/swagger` | 公开 | 面向 OpenAPI 文档（`/swagger/v1/swagger.json`）的 Swagger UI；Authorize 对话框为鉴权调用提供 `Bearer <server-token>` |
+| `/api/tools` | `server-token` 非空时必填 | MCP 发现面的只读 REST 孪生：三个工具及描述与类型化参数行，与 `tools/list` 同源的 `[McpServerTool]` 标注实时解析 |
+
+浏览器宿主的前端经 CORS 集成（`AllowAnyOrigin/Method/Header`）。未处理异常按统一的
+错误契约回答 `{"error":"<code>","message":"..."}`：畸形请求 → `400 BAD_REQUEST`、
+超时 → `504 TIMEOUT`、其余 → `500 INTERNAL_ERROR`。
 
 ### 4. 用 MCP inspector 调试
 
@@ -327,9 +344,10 @@ TestServer 的真实 `/mcp` 端点）：
 | 单元 | `tests/McpMarkdownRag.Tests/Unit/MarkdownChunkerTests.cs` | 标题切分 + 带重叠的按令牌二次切分、空输入处理 |
 | 单元 | `tests/McpMarkdownRag.Tests/Unit/StorageTests.cs` | md5+mtime 指纹、JSON 跟踪持久化、文件发现（递归模式跳过点号目录）、向量存储插入/搜索/删除/丢弃 |
 | 单元 | `tests/McpMarkdownRag.Tests/Unit/MarkdownRagServiceTests.cs` | 用确定性假嵌入提供者 + 内存 mock 文件系统跑全生命周期：不存在目录的消息、增量→无事可做、搜索输出、全量重建、清空 |
-| 单元 | `tests/McpMarkdownRag.Tests/Security/BearerTokenMiddlewareTests.cs` | `server-token` 为空/缺失时鉴权关闭；接受 Bearer 头与 `?access_token=`；错误/畸形/缺失凭据 → 401 契约载荷；CORS 预检放行；恒时比较 |
+| 单元 | `tests/McpMarkdownRag.Tests/Security/BearerTokenMiddlewareTests.cs` | `server-token` 为空/缺失时鉴权关闭；接受 Bearer 头与 `?access_token=`；错误/畸形/缺失凭据 → 401 契约载荷；CORS 预检放行；公开路径豁免（Swagger UI/文档、`/`、`/health`）无凭据可直达；形近路径仍受保护；恒时比较 |
 | 集成 | `tests/McpMarkdownRag.Tests/Integration/McpIntegrationTests.cs` | 真实 `/mcp` Streamable HTTP 契约：`initialize`（serverInfo + instructions）、`tools/list`（三个工具）、完整的 `index_documents` → `search_documents` → `clear_index` 流程（含原版消息字符串），外加 DI 装配健全性检查 |
-| 集成 | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | 开启鉴权的服务器夹具：无凭据与错误令牌的 MCP 请求 → 401 契约载荷；有效 Bearer 令牌完成 MCP 会话初始化并到达 `tools/list` |
+| 集成 | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | 开启鉴权的服务器夹具：无凭据与错误令牌的 MCP 请求 → 401 契约载荷；有效 Bearer 令牌完成 MCP 会话初始化并到达 `tools/list`；`/api/tools` 孪生无凭据 → 401，而 `/`、`/health` 与 `/swagger` 保持公开 |
+| 集成 | `tests/McpMarkdownRag.Tests/Integration/WebSurfaceIntegrationTests.cs` | 公开 HTTP 面端到端：根信息 + `/health` 载荷、描述 `/api/tools` 的公开 Swagger 文档、以及实时解析的 `/api/tools` 目录（三个工具、类型化参数行的必填/可选） |
 
 集成夹具把 ONNX 管道替换为确定性 `FakeEmbeddingProvider`（BERT 分词器同理替换为轻量
 实现），测试全程无模型下载、无网络访问。一键运行全部测试：
@@ -356,7 +374,8 @@ dotnet test tests/McpMarkdownRag.Tests --collect "XPlat,Code Coverage"
 | 分块 | `src/McpMarkdownRag/Chunking/MarkdownChunker.cs` | 标题切分 → 令牌切分（512 / 100 重叠） |
 | 嵌入 | `src/McpMarkdownRag/Embeddings/*.cs` | ONNX 嵌入提供者 + BERT 分词器 + 模型下载器 |
 | 存储 | `src/McpMarkdownRag/Storage/*.cs` | 内存向量存储、JSON 索引跟踪、文件发现 |
-| 安全 | `src/McpMarkdownRag/Security/BearerTokenMiddleware.cs` | 面向每个 HTTP 请求的可选 `server-token` Bearer 门 |
+| 安全 | `src/McpMarkdownRag/Security/BearerTokenMiddleware.cs` | 面向每个 HTTP 请求的可选 `server-token` Bearer 门（含公开路径豁免） |
+| API | `src/McpMarkdownRag/Api/MarkdownRagApiEndpoints.cs` | MCP 发现面的只读 REST 孪生（`/api/tools`） |
 | 配置 | `src/McpMarkdownRag/Configuration/`、`src/McpMarkdownRag/appsettings.json` | 强类型 appsettings 选项 |
 | 测试 | `tests/McpMarkdownRag.Tests/` | 单元 + 全链路集成测试（TestServer） |
 | Docker | `Dockerfile`、`docker-compose.yml`、`.dockerignore` | 容器部署 |

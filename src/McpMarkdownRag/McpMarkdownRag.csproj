@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 <!-- Web SDK: the ASP.NET Core framework reference is built in (no explicit
-     Microsoft.AspNetCore/Extensions package references are needed), so a future
-     REST API surface (Swagger UI, static files, minimal-API endpoints) can be
-     added without restructuring the project. The stdio transport runs on
-     Microsoft.Extensions.Hosting, which the framework also provides. -->
+     Microsoft.AspNetCore/Extensions package references are needed). The HTTP
+     transport doubles as the externally-exposed web surface: Swagger UI,
+     CORS, discovery endpoints and the MCP endpoint live in the same pipeline.
+     The stdio transport runs on Microsoft.Extensions.Hosting, which the
+     framework also provides. -->
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -20,6 +21,9 @@
     <PackageReference Include="ModelContextProtocol" Version="1.0.0" />
     <!-- Streamable HTTP transport (Kestrel-based) when Transport=Http is selected. -->
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.0.0" />
+
+    <!-- Swagger UI + OpenAPI document for the HTTP discovery surface. -->
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
 
     <!-- Local-first ONNX embedding pipeline. -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.20.1" />

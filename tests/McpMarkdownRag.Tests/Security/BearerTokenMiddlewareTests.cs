@@ -10,7 +10,8 @@ namespace McpMarkdownRag.Tests.Security;
 /// <summary>
 /// Mirrors the reference server's BearerTokenMiddlewareTests: the token gate is
 /// disabled when 'server-token' is empty, accepts Authorization/Query credentials
-/// otherwise, and rejects everything else with 401.
+/// otherwise, exempts CORS preflights and the public paths (Swagger UI/document,
+/// root discovery, health check), and rejects everything else with 401.
 /// </summary>
 public class BearerTokenMiddlewareTests
 {
@@ -135,6 +136,37 @@ public class BearerTokenMiddlewareTests
     {
         var (status, _) = await InvokeAsync(Token, "/mcp", method: "OPTIONS");
         Assert.Equal(StatusCodes.Status200OK, status);
+    }
+
+    /// <summary>The public-path exemption list works at the gate itself: Swagger UI
+    /// and its JSON document, root discovery and health check pass without
+    /// credentials even when the token is configured.</summary>
+    [Fact]
+    public async Task Swagger_root_and_health_paths_are_public_without_credentials()
+    {
+        var (statusSwaggerUi, _) = await InvokeAsync(Token, "/swagger/index.html");
+        Assert.Equal(StatusCodes.Status200OK, statusSwaggerUi);
+
+        var (statusSwaggerDoc, _) = await InvokeAsync(Token, "/swagger/v1/swagger.json");
+        Assert.Equal(StatusCodes.Status200OK, statusSwaggerDoc);
+
+        var (statusRoot, _) = await InvokeAsync(Token, "/");
+        Assert.Equal(StatusCodes.Status200OK, statusRoot);
+
+        var (statusHealth, _) = await InvokeAsync(Token, "/health");
+        Assert.Equal(StatusCodes.Status200OK, statusHealth);
+    }
+
+    /// <summary>The exemption matches the whole /swagger segment (any depth), but a
+    /// lookalike like /swagger-ui or /healthcheck does NOT slip past the gate.</summary>
+    [Fact]
+    public async Task Lookalike_public_paths_are_still_guarded()
+    {
+        var (statusLookalike, _) = await InvokeAsync(Token, "/swaggerx/index.html");
+        Assert.Equal(StatusCodes.Status401Unauthorized, statusLookalike);
+
+        var (statusApi, _) = await InvokeAsync(Token, "/api/tools");
+        Assert.Equal(StatusCodes.Status401Unauthorized, statusApi);
     }
 
     [Fact]

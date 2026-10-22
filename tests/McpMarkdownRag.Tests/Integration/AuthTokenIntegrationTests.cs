@@ -95,4 +95,27 @@ public class AuthTokenIntegrationTests : IClassFixture<AuthenticatedAppFactory>
         Assert.True(IsSuccess(status), $"{(int)status} {body}");
         Assert.Contains("\"name\":\"index_documents\"", body);
     }
+
+    /// <summary>The REST discovery twin is NOT in the public-path exemption list: it
+    /// answers 401 without credentials, exactly like the MCP endpoint.</summary>
+    [Fact]
+    public async Task Tool_catalog_requires_authentication_when_token_configured()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.GetAsync("/api/tools");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Contains("UNAUTHORIZED", await response.Content.ReadAsStringAsync());
+    }
+
+    /// <summary>The public-path exemptions work end-to-end: with the token gate
+    /// ENABLED the Swagger UI/document, root discovery and health check stay
+    /// reachable without any credentials.</summary>
+    [Fact]
+    public async Task Public_paths_stay_reachable_without_credentials()
+    {
+        using var client = _factory.CreateClient();
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/swagger/v1/swagger.json")).StatusCode);
+    }
 }

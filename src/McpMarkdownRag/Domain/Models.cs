@@ -17,3 +17,6 @@ public sealed class ChunkEntity
 /// Mirrors the <c>SearchResult</c> model in the original implementation.
 /// </summary>
 public sealed record SearchResult(double Distance, ChunkEntity Entity);
+
+/// <summary>Uniform error shape returned by the HTTP surface (the MCP surface returns protocol-level errors instead).</summary>
+public sealed record ErrorResponse(string Error, string Message);

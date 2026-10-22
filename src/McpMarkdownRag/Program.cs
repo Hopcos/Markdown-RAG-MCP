@@ -1,4 +1,5 @@
 using System.IO.Abstractions;
+using MarkdownRagMcp.Api;
 using MarkdownRagMcp.Abstractions;
 using MarkdownRagMcfg = MarkdownRagMcp.Configuration;
 using MarkdownRagMcp.Chunking;
@@ -7,11 +8,13 @@ using MarkdownRagMcp.Security;
 using MarkdownRagMcp.Services;
 using MarkdownRagMcp.Storage;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.OpenApi;
 using ModelContextProtocol.AspNetCore;
 using ModelContextProtocol.Server;
 
@@ -52,9 +55,12 @@ static async Task RunStdioAsync(string[] args)
 }
 
 // ---------------------------------------------------------------------------
-// HTTP host: Streamable HTTP transport over Kestrel. stdout is not a protocol
-// channel here, but logging is kept on stderr/stdout console for parity and
-// so the same logs work under both hosts.
+// HTTP host: the externally-exposed web surface. The MCP Streamable HTTP
+// endpoint shares the pipeline with Swagger UI (OpenAPI document + interactive
+// explorer), a read-only REST twin of the MCP discovery surface (/api/tools),
+// CORS for browser-hosted frontends, and public discovery/health endpoints.
+// stdout is not a protocol channel here, but logging is kept on stderr/stdout
+// console for parity and so the same logs work under both hosts.
 // ---------------------------------------------------------------------------
 static async Task RunHttpAsync(string[] args)
 {
@@ -69,6 +75,57 @@ static async Task RunHttpAsync(string[] args)
         .GetSection(MarkdownRagMcfg.MarkdownRagOptions.SectionName)
         .Get<MarkdownRagMcfg.MarkdownRagOptions>()?.TransportSettings
         ?? new MarkdownRagMcfg.TransportOptions();
+
+    // The optional bearer token (root-level 'server-token' or its 'ServerToken' fallback):
+    // non-empty => guarded by BearerTokenMiddleware; empty => authentication disabled.
+    var serverToken = FirstNonEmpty(
+        builder.Configuration[MarkdownRagMcfg.MarkdownRagOptions.ServerTokenKey],
+        builder.Configuration[MarkdownRagMcfg.MarkdownRagOptions.ServerTokenFallbackKey]);
+
+    // ───────────────────────────────────────────────────────────────
+    // CORS so a browser-hosted frontend can integrate with the HTTP surface
+    // (preflights are answered without credentials; see BearerTokenMiddleware).
+    // ───────────────────────────────────────────────────────────────
+    builder.Services.AddCors(options => options.AddPolicy("Frontend", policy => policy
+        .AllowAnyOrigin()
+        .AllowAnyHeader()
+        .AllowAnyMethod()));
+
+    // ───────────────────────────────────────────────────────────────
+    // Swagger — enabled unconditionally, including the Release environment.
+    // The UI and its JSON document are public (see BearerTokenMiddleware), so
+    // the interactive explorer opens without credentials; the MCP endpoint and
+    // /api/tools still authenticate via the Authorize dialog when a token is set.
+    // ───────────────────────────────────────────────────────────────
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen(options =>
+    {
+        options.SwaggerDoc("v1", new Microsoft.OpenApi.OpenApiInfo
+        {
+            Title = "Markdown-RAG MCP Server API",
+            Version = "v1",
+            Description =
+                "Read-only REST surface mirroring the MCP discovery surface of the " +
+                "Markdown-RAG MCP server (indexing and searching happen through the " +
+                "MCP endpoint). " +
+                (serverToken is null
+                    ? "Authentication is currently disabled ('server-token' not configured)."
+                    : "Authenticate with the header 'Authorization: Bearer <server-token>'."),
+        });
+
+        options.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.OpenApiSecurityScheme
+        {
+            Name = "Authorization",
+            In = Microsoft.OpenApi.ParameterLocation.Header,
+            Type = Microsoft.OpenApi.SecuritySchemeType.ApiKey,
+            Description = "Enter: Bearer <server-token>",
+        });
+
+        options.AddSecurityRequirement(doc => new Microsoft.OpenApi.OpenApiSecurityRequirement
+        {
+            [new Microsoft.OpenApi.OpenApiSecuritySchemeReference("Bearer", doc)] = [],
+        });
+    });
 
     // When hosted under IIS/ANCM (in-process or out-of-process) the endpoint is supplied by
     // the host and the address list is made read-only once the pipeline is built, so calling
@@ -94,6 +151,45 @@ static async Task RunHttpAsync(string[] args)
 
     var app = builder.Build();
 
+    // ───────────────────────────────────────────────────────────────
+    // Pipeline: exception mapping → CORS → bearer auth → Swagger → endpoints
+    // ───────────────────────────────────────────────────────────────
+    app.UseExceptionHandler(errorApp =>
+    {
+        errorApp.Run(async context =>
+        {
+            var logger = context.RequestServices
+                .GetRequiredService<ILoggerFactory>()
+                .CreateLogger("MarkdownRagMcp.ErrorHandler");
+            var error = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+
+            var (statusCode, errorCode) = error switch
+            {
+                ArgumentException => (StatusCodes.Status400BadRequest, "BAD_REQUEST"),
+                // Malformed requests surfaced by the HTTP plumbing keep their own status.
+                BadHttpRequestException bad => (bad.StatusCode, "BAD_REQUEST"),
+                TimeoutException => (StatusCodes.Status504GatewayTimeout, "TIMEOUT"),
+                _ => (StatusCodes.Status500InternalServerError, "INTERNAL_ERROR"),
+            };
+
+            if (statusCode >= 500)
+            {
+                logger.LogError(error, "Request {Path} failed with {ErrorCode}.", context.Request.Path, errorCode);
+            }
+            else
+            {
+                logger.LogWarning("Request {Path} failed with {ErrorCode}: {Message}",
+                    context.Request.Path, errorCode, error?.Message);
+            }
+
+            context.Response.StatusCode = statusCode;
+            await context.Response.WriteAsJsonAsync(new MarkdownRagMcp.Domain.ErrorResponse(
+                errorCode, error?.Message ?? "Unexpected server error."));
+        });
+    });
+
+    app.UseCors("Frontend");
+
     // Bearer-token authentication gate. When 'server-token' (root-level appsettings key or
     // the ServerToken environment variable) is non-empty, every request must present
     // 'Authorization: Bearer <token>' (or ?access_token= for browser GETs); when it is
@@ -101,12 +197,43 @@ static async Task RunHttpAsync(string[] args)
     // /mcp — including initialize — is guarded.
     app.UseMiddleware<BearerTokenMiddleware>();
 
+    // Swagger is served in every environment, including Release.
+    app.UseSwagger();
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Markdown-RAG MCP Server API");
+        options.DocumentTitle = "Markdown-RAG MCP Server";
+        options.EnablePersistAuthorization();
+    });
+
+    app.MapGet("/", () => Results.Ok(new
+    {
+        name = "mcp-markdown-rag",
+        transport = "MCP Streamable HTTP + stdio",
+        mcp = "/" + (string.IsNullOrWhiteSpace(transportSettings.HttpRoutePrefix)
+            ? "" : transportSettings.HttpRoutePrefix.TrimStart('/')),
+        stateless = transportSettings.Stateless,
+        tools = new[] { "index_documents", "search_documents", "clear_index" },
+        swagger = "/swagger",
+        api = "/api",
+        health = "/health",
+    })).ExcludeFromDescription();
+
+    app.MapGet("/health", () => Results.Ok(new { status = "ok" })).ExcludeFromDescription();
+
+    // Read-only REST twin of the MCP discovery surface (tools/list).
+    app.MapMarkdownRagApiEndpoints();
+
     // MapMcp exposes the Streamable HTTP endpoint; the optional prefix lets callers
     // mount it under a subpath (e.g. "/mcp") instead of the root.
-    app.MapMcp(string.IsNullOrEmpty(transportSettings.HttpRoutePrefix) ? "" : transportSettings.HttpRoutePrefix);
+    app.MapMcp(string.IsNullOrWhiteSpace(transportSettings.HttpRoutePrefix) ? "" : transportSettings.HttpRoutePrefix.TrimStart('/'));
 
     app.Run();
 }
+
+/// <summary>The first non-empty/whitespace value, or null — mirrors the auth contract of the HTTP surface.</summary>
+static string? FirstNonEmpty(params string?[] values)
+    => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
 // ---------------------------------------------------------------------------
 // Shared DI wiring — identical for both transports.
