@@ -1,0 +1,43 @@
+services:
+  mcp-markdown-rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcp-markdown-rag:latest
+    container_name: mcp-markdown-rag
+    ports:
+      - "8080:8080"
+    environment:
+      # Run as a Streamable HTTP MCP server (the default "Stdio" transport is for
+      # child-process hosts like Claude Desktop; a container needs the HTTP one).
+      MarkdownRag__Transport: "Http"
+      # Bind every interface so the published port is reachable from the host.
+      # This is applied by the app itself (WebHost.UseUrls), so no ASPNETCORE_URLS needed.
+      MarkdownRag__TransportSettings__HttpEndpointUrl: "http://0.0.0.0:8080"
+      # MCP endpoint is mounted at /mcp (http://host:8080/mcp).
+      MarkdownRag__TransportSettings__HttpRoutePrefix: "mcp"
+      # Stateless mode: each HTTP request is independent; recommended for servers.
+      MarkdownRag__TransportSettings__Stateless: "true"
+
+      # Index database (tracking file + vector store JSON), backed by a volume.
+      MarkdownRag__DatabasePath: "/app/.db"
+
+      # Embedding model (first run downloads ~90 MB from Hugging Face and caches it;
+      # the volume prevents re-downloading on container recreation).
+      MarkdownRag__Embedding__ModelCachePath: "/app/.models/embeddings"
+
+      # Remaining settings (collection name, chunk size/overlap, search defaults,
+      # batching, embedding dimension) fall back to the appsettings.json defaults;
+      # override any of them with MarkdownRag__* environment variables, e.g.
+      #   MarkdownRag__Chunking__ChunkSize: "512"
+    volumes:
+      # Index database so the vector store and tracking file survive restarts.
+      - ./db:/app/.db
+      # Embedding model cache (model.onnx + vocab.txt).
+      - ./hf-models:/app/.models/embeddings
+      # Optional: mount your markdown corpora so `index_documents` can index them
+      # by passing current_working_directory=/data/docs (and directory=<subdir>).
+      # - ./docs:/data/docs
+      # Optional: customize configuration without rebuilding the image.
+      # - ./config/appsettings.json:/app/appsettings.json:ro
+    restart: unless-stopped

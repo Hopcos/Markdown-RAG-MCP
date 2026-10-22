@@ -165,3 +165,10 @@ static string builder_GetTransport(string[] args)
     var transport = section["Transport"];
     return string.IsNullOrWhiteSpace(transport) ? "Stdio" : transport;
 }
+
+/// <summary>
+/// Makes the auto-generated top-level-statements entry-point class visible to the
+/// integration test project (<c>WebApplicationFactory&lt;Program&gt;</c>).
+/// </summary>
+public partial class Program;
+

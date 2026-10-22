@@ -27,15 +27,15 @@ public static class MarkdownRagTools
     public static async Task<IndexResult> IndexDocumentsAsync(
         MarkdownRagService service,
         RequestContext<CallToolRequestParams> context,
-        [Description("Current working directory")] string currentWorkingDirectory,
+        [Description("Current working directory")] string current_working_directory,
         CancellationToken cancellationToken,
         [Description("Directory to index (relative to current working directory)")] string directory = "",
         [Description("Recursively index subdirectories")] bool recursive = false,
-        [Description("Force a full reindex of all files")] bool forceReindex = false)
+        [Description("Force a full reindex of all files")] bool force_reindex = false)
     {
         var progress = CreateProgressReporter(context);
         return await service.IndexDocumentsAsync(
-            currentWorkingDirectory, directory, recursive, forceReindex,
+            current_working_directory, directory, recursive, force_reindex,
             progress, cancellationToken);
     }
 

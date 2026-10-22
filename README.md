@@ -1,39 +1,38 @@
-# MCP-Markdown-RAG (.NET 10 port) / MCP-Markdown-RAG（.NET 10 移植版）
-
-[English](#english) · [中文](#中文)
-
----
-
-## English
+# MCP-Markdown-RAG (.NET 10)
 
 A **Model Context Protocol (MCP)** server that provides a **local-first RAG engine** for your
-markdown documents. This is a faithful .NET 10 reimplementation of
+markdown documents: it indexes `.md` files into a local vector database and answers semantic
+search queries over them. This is a faithful .NET 10 port of
 [MCP-Markdown-RAG](https://github.com/Zackriya-Solutions/MCP-Markdown-RAG), preserving the
 original's behavior and tool surface while adopting a clean, highly-extensible .NET design.
 
 ✅ **Local-first & private** — all data is processed and stored locally. Nothing leaves your
-machine for indexing.
+machine for indexing (except the one-time embedding model download).
 
 ✅ **Semantic search for markdown** — find document sections by conceptual meaning, not just
 keywords.
 
-✅ **MCP-compatible** — works with any MCP host (Claude Desktop, Windsurf, Cursor, …).
+✅ **MCP-compatible** — works with any MCP host (Claude Desktop, Claude Code, Cursor,
+Windsurf, the MCP inspector, …).
 
 ✅ **Two transports** — run as a stdio child process (default) or as a Streamable HTTP
 service over Kestrel, selected from `appsettings.json`.
 
 ✅ **Extensible** — every external concern (embedding, vector storage, chunking, file
-discovery, index tracking) sits behind an interface, so alternative providers can be swapped in
-via DI without touching call sites.
+discovery, index tracking) sits behind an interface, so alternative providers can be swapped
+in via DI without touching call sites.
 
-### Tools
+✅ **Docker & docker compose ready** — one image, environment-variable configuration,
+volume-backed index database and model cache (see [Docker deployment](#docker-deployment)).
+
+## Tools
 
 The server exposes three tools, identical in semantics to the original:
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|
-| `index_documents` | Index markdown files into the local vector database. Incremental by default; `force_reindex=true` rebuilds from scratch. | `current_working_directory` (required), `directory` (default `""`), `recursive` (default `false`), `force_reindex` (default `false`) |
-| `search_documents` | Semantic search over the indexed chunks. | `query` (required), `k` (default `5`) |
+| `index_documents` | Index markdown files into the local vector database. Incremental by default; `force_reindex=true` rebuilds from scratch. Large corpora are embedded in batches with progress notifications. | `current_working_directory` (required), `directory` (default `""`), `recursive` (default `false`), `force_reindex` (default `false`) |
+| `search_documents` | Semantic search over the indexed chunks. Returns the top hits joined by `---` separators, or `"No results found."`. | `query` (required), `k` (default `5`) |
 | `clear_index` | Drop the vector collection and reset the tracking file. | — |
 
 Indexing works in the same two modes as the original:
@@ -42,131 +41,96 @@ Indexing works in the same two modes as the original:
 - **Incremental update** (default) — detects changed files via an md5-hash + modified-time
   tracking file, prunes their old chunks, and re-embeds only them.
 - **Recursive indexing** (`recursive=true`) — descends into subdirectories, skipping
-  dot-prefixed directories.
+  dot-prefixed directories (`.git`, `.obsidian`, …).
 
-### Project layout
+The server responds with the same message strings as the Python original:
+`"Full reindex"`, `"Incremental update"`, `"Already up to date, Nothing to index!"`,
+`"Directory does not exist!"`, and the `---`-separated search output.
 
-| Area | File(s) | Purpose |
-|------|---------|---------|
-| Host | `Program.cs` | Host + DI wiring; stdio *or* Streamable HTTP transport, logging→stderr |
-| Tools | `Tools/MarkdownRagTools.cs` | Thin MCP tool adapters (`[McpServerTool]` methods) |
-| Orchestration | `Services/MarkdownRagService.cs` | Indexing/search orchestration |
-| Abstractions | `Abstractions/*.cs` | `IEmbeddingProvider`, `IVectorStore`, `IMarkdownChunker`, `IIndexTracker`, `IMarkdownFileDiscovery`, `ITextTokenizer` |
-| Chunking | `Chunking/MarkdownChunker.cs` | Heading split → token split (512 / 100 overlap) |
-| Embeddings | `Embeddings/*.cs` | ONNX embedding provider + BERT tokenizer + model downloader |
-| Storage | `Storage/*.cs` | In-memory vector store, JSON index tracker, file discovery |
-| Config | `Configuration/`, `appsettings.json` | Strongly-typed appsettings options |
+## Quick start
 
-### How the design principles are applied
-
-**High extensibility** — every external dependency sits behind an interface and is registered
-exactly once in `Program.cs` (DI). Swapping the in-memory store for a Milvus client, the
-ONNX embeddings for a cloud embedding API, or the chunker for an alternative costs a single DI
-registration change. The tools and the orchestration service never reference a concrete
-implementation.
-
-**Configuration only in appsettings** — there is no command-line surface. `appsettings.json`
-controls the transport (stdio vs. HTTP), the HTTP bind URL/route, the database path, collection
-name, embedding model + dimension, chunk size/overlap, default search limit, and batch size. Tool
-arguments (`directory`, `recursive`, `force_reindex`, `k`) keep the original defaults.
-
-**Functional parity** — same three tools, same arguments and defaults, same incremental-vs-full
-reindex semantics, same md5+mtime change detection, same `---`-separated search output, same
-"Already up to date" / "Directory does not exist" messages, and the same server name/version/
-instructions string as the Python original.
-
-**Local-first** — the original embeds Milvus Lite (Python-only) and pymilvus's bundled
-embedding function; both are replaced with local-first defaults (a JSON-persisted in-memory
-vector store and an ONNX embedding provider) that preserve the privacy guarantee. The ONNX
-model is downloaded from Hugging Face on first run and cached locally, mirroring the original's
-"first run downloads the model" experience.
-
-### Configuration
+### 1. Configure
 
 All configuration is fixed in [`appsettings.json`](appsettings.json) under the `MarkdownRag`
-section:
+section — there is no command-line surface:
 
 ```jsonc
 {
   "MarkdownRag": {
-    "Transport": "Stdio",                  // "Stdio" (default) or "Http" (Streamable HTTP)
+    "Transport": "Stdio",                        // "Stdio" (default) or "Http" (Streamable HTTP)
     "TransportSettings": {
       "HttpEndpointUrl": "http://localhost:3001", // Kestrel bind URL (Transport=Http only)
-      "HttpRoutePrefix": "",                // route prefix, e.g. "/mcp"; "" = root
-      "Stateless": true                     // stateless mode (recommended for servers)
+      "HttpRoutePrefix": "",                     // route prefix, e.g. "/mcp"; "" = root
+      "Stateless": true                           // stateless mode (recommended for servers)
     },
-    "DatabasePath": "./.db",                 // tracking + vector store files
+    "DatabasePath": "./.db",                      // tracking + vector store files
     "CollectionName": "markdown_vectors",
     "TrackingFileName": "index_tracking.json",
     "VectorStoreFileName": "vectors.json",
-
     "Embedding": {
-      "Provider": "Onnx",                    // DI key for the embedding provider
-      "Dimension": 768,                      // must match the configured model
+      "Provider": "Onnx",                          // DI key of the embedding provider
+      "Dimension": 384,                            // must match the configured model
       "ModelId": "sentence-transformers/all-MiniLM-L6-v2",
-      "ModelCachePath": "./.models/embeddings",// first-run download lands here
+      "ModelCachePath": "./.models/embeddings",    // first-run download lands here
       "MaxSequenceLength": 256,
       "PoolingMode": "Mean"
     },
     "Chunking": { "ChunkSize": 512, "ChunkOverlap": 100 },
     "Search":   { "DefaultLimit": 5 },
-    "Indexing":  { "BatchSize": 32 }          // documents embedded per batch
+    "Indexing":  { "BatchSize": 32 }               // documents embedded per batch
   }
 }
 ```
 
-> **Transport selection** — `Transport` chooses between the two MCP transports:
-> - `"Stdio"` (default) — JSON-RPC over stdin/stdout; the server runs as a child process of
->   the host (Claude Desktop, Cursor, Claude Code, …). Logging is forced to stderr.
-> - `"Http"` — Streamable HTTP over Kestrel at `HttpEndpointUrl`. Use this for network hosts
->   (Claude Desktop with an HTTP server URL, remote containers, web clients). `Stateless=true`
->   is recommended; set it false only if a client needs server-initiated requests
->   (sampling/elicitation), which this server does not issue. Any setting under
->   `TransportSettings` is ignored when `Transport=Stdio`.
+> **Environment variables** — every config value can be overridden with the standard
+> `__`-segment notation (handy for Docker), e.g.:
 >
-> Every config value can also be overridden with environment variables using the standard
-> `__`-segment notation, e.g. `MarkdownRag__Transport=Http` or
-> `MarkdownRag__TransportSettings__HttpEndpointUrl=http://0.0.0.0:8080`.
+> ```bash
+> MarkdownRag__Transport="Http"
+> MarkdownRag__TransportSettings__HttpEndpointUrl="http://0.0.0.0:8080"
+> MarkdownRag__TransportSettings__HttpRoutePrefix="mcp"
+> MarkdownRag__TransportSettings__Stateless="true"
+> MarkdownRag__DatabasePath="/app/.db"
+> MarkdownRag__Embedding__ModelCachePath="/app/.models/embeddings"
+> ```
 
-> **First run:** the embedding model (~90 MB) is downloaded automatically from Hugging Face
-> and cached under `ModelCachePath`. To avoid a first-call timeout, the server starts a
-> **background preload** at startup: it fetches the model and builds the ONNX session while
-> the MCP handshake proceeds. If a tool call arrives before the preload finishes, it simply
-> waits for the load to complete. Tool calls are also **batched** into a single ONNX forward
-> pass, keeping first-call latency well under client timeouts.
->
-> **Model placement (manual / offline):** if you pre-download the model yourself, place the
-> two files into the cache directory below (create it if missing). The server skips the
-> download when both files are present.
+> **First run** — the embedding model (`model.onnx` + `vocab.txt`, ~90 MB) is downloaded
+> automatically from Hugging Face and cached under `ModelCachePath`. A **background preload**
+> hosted service fetches the model and builds the ONNX session right after startup, so the
+> first tool call does not pay that cost; if a tool call arrives before the preload finishes,
+> it simply waits for the load to complete. To use a pre-downloaded model instead, place
+> both files into the cache directory manually:
 >
 > ```
 > .models/embeddings/sentence-transformers/all-MiniLM-L6-v2/
-> ├── model.onnx   ← from huggingface.co/.../onnx/model.onnx (~90 MB)
-> └── vocab.txt    ← from huggingface.co/.../vocab.txt
+> ├── model.onnx
+> └── vocab.txt
 > ```
->
-> The path is `<ModelCachePath>/<ModelId-with-slashes-turned-into-folder-separators>/`. With the
-> defaults above and the exe run from its own directory, that is
-> `./.models/embeddings/sentence-transformers/all-MiniLM-L6-v2/`. If you change `ModelId`,
-> the subfolder name changes accordingly.
 
-### Install & run
+> **Transport selection** —
+> - `"Stdio"` (default) — JSON-RPC over stdin/stdout; the server runs as a child process of
+>   the MCP host (Claude Desktop, Cursor, Claude Code, …). Logging is forced to stderr so
+>   the protocol stream is never corrupted.
+> - `"Http"` — Streamable HTTP over Kestrel at `HttpEndpointUrl`, mounted at
+>   `HttpRoutePrefix` (e.g. `/mcp`). `Stateless=true` is recommended; set it false only if a
+>   client needs server-initiated requests (sampling/elicitation), which this server does
+>   not issue. Any setting under `TransportSettings` is ignored when `Transport=Stdio`.
 
-Publish a self-contained executable:
+### 2. Run
 
 ```bash
+dotnet run                          # stdio server (default)
+# or
 dotnet publish -c Release -r win-x64 --self-contained false
 # exe: bin/Release/net10.0/win-x64/publish/mcp-markdown-rag.exe
 ```
 
-(For a fully self-contained build that needs no .NET runtime installed, use `--self-contained true`.)
+The exe resolves `appsettings.json` from its own directory, so place a configured copy next
+to the binary.
 
-### Configure your MCP host
+### 3. Register with an MCP host
 
-#### Claude Code (pointing at the built .exe)
-
-For Claude Code, edit `.mcp.json` (project or user scope) and point the `command` directly at
-the built executable — no `dotnet run` needed:
+#### Claude Code (stdio, pointing at the built .exe)
 
 ```json
 {
@@ -179,160 +143,57 @@ the built executable — no `dotnet run` needed:
 }
 ```
 
-> The exe resolves `appsettings.json` from its own directory, so place a configured
-> `appsettings.json` next to `mcp-markdown-rag.exe`. On Linux/macOS use the forward-slash
-> path to the `mcp-markdown-rag` binary.
+On Linux/macOS use a forward-slash path to the binary.
 
-#### HTTP (Streamable HTTP transport)
-
-Set `Transport` to `Http` in `appsettings.json` (and configure `HttpEndpointUrl` /
-`HttpRoutePrefix` / `Stateless` under `TransportSettings`), then run the exe directly. The
-server starts listening on the configured URL and exposes the MCP Streamable HTTP endpoint at
-the root (or at `HttpRoutePrefix` such as `/mcp`).
-
-```jsonc
-{
-  "MarkdownRag": {
-    "Transport": "Http",
-    "TransportSettings": {
-      "HttpEndpointUrl": "http://localhost:3001",
-      "HttpRoutePrefix": "",
-      "Stateless": true
-    }
-    // …其余 MarkdownRag 配置不变
-  }
-}
-```
-
-```bash
-./mcp-markdown-rag.exe        # 现在监听 http://localhost:3001
-```
-
-Then point an HTTP-capable MCP host at the URL. Example for Claude Desktop (Streamable HTTP):
-
-```json
-{
-  "mcpServers": {
-    "markdown_rag": {
-      "url": "http://localhost:3001"
-    }
-  }
-}
-```
-
-> **Security.** The default `HttpEndpointUrl` binds to `localhost` so the server is reachable
-> only from the same machine. If you bind to `0.0.0.0` or a public interface to share the
-> server across machines, put it behind a reverse proxy that enforces authentication and TLS,
-> and configure ASP.NET Core's `AllowedHosts` rather than relying on the wildcard. The server
-> itself has no built-in auth — it is intended for trusted local/loopback use.
->
-> **`Stateless` mode.** `true` (default) is recommended: each HTTP request is independent, the
-> server keeps no session state, and it never issues server-to-client requests. Set `false` only
-> if a client requires sampling/elicitation callbacks, which this server does not use.
-
-#### Claude Desktop / Windsurf / Cursor (dotnet run)
+#### Claude Desktop / Cursor (stdio via dotnet run)
 
 ```json
 {
   "mcpServers": {
     "markdown_rag": {
       "command": "dotnet",
-      "args": [
-        "run",
-        "--project",
-        "/ABSOLUTE/PATH/TO/markdown_rag_mcp_dotnet",
-        "-c",
-        "Release"
-      ]
+      "args": ["run", "--project", "/ABSOLUTE/PATH/TO/Markdown-RAG-MCP-Dotnet", "-c", "Release"]
     }
   }
 }
 ```
 
-#### Debug with the MCP inspector
+#### HTTP hosts (Streamable HTTP transport)
 
-Launch the inspector UI:
+Set `Transport=Http` and point an HTTP-capable MCP host at the endpoint, e.g. Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "markdown_rag": {
+      "url": "http://localhost:3001/mcp"
+    }
+  }
+}
+```
+
+> **Security.** The default `HttpEndpointUrl` binds to `localhost`, so the server is only
+> reachable from the same machine. If you bind to `0.0.0.0` (or a container port) to share
+> it, put it behind a reverse proxy that enforces authentication and TLS. The server itself
+> has no built-in auth — it is intended for trusted local/loopback or proxied deployments.
+
+### 4. Debug with the MCP inspector
 
 ```bash
 npx @modelcontextprotocol/inspector
 ```
 
-In the inspector, open **Add Server** and fill in the fields. This server supports both stdio
-(local process) and Streamable HTTP — pick the matching **Transport Type**.
+Add a server, pick the matching **Transport Type** (stdio: command + args, or
+**STREAMABLE HTTP**: URL), and connect. The server reports `mcp-markdown-rag` with the three
+tools above.
 
-**Stdio** — set **Transport Type** to `STDIO`. The remaining fields:
+> ⏱️ **Large corpora & client timeouts.** Embedding thousands of chunks on CPU can exceed a
+> client's default request timeout (the inspector cancels after 60 s). Raise the inspector's
+> **Request Timeout** (Settings panel) for big indexing runs — the server also emits
+> `notifications/progress` after each embedding batch, which clients that honor progress
+> notifications reset their idle timer on.
 
-| Field | What to enter |
-|-------|---------------|
-| **Transport Type** | `STDIO` |
-| **Command** | The executable that launches the server (see options below) |
-| **Arguments** | Arguments passed to the command, one per line. Leave empty when using the `.exe` directly. |
-| **Environment Variables** | Extra env vars (key/value). Not required by this server — leave empty. |
-
-**HTTP** — set **Transport Type** to `STREAMABLE HTTP`, then point at the running server.
-
-- **URL**: `http://localhost:3001/` (or whatever `HttpEndpointUrl` + `HttpRoutePrefix` you
-  configured; start the server first with `Transport=Http`).
-
-Pick one of these three launch styles:
-
-**A. Direct `.exe` (fastest, recommended)** — requires `dotnet publish` first (see
-*Install & run*), and a configured `appsettings.json` beside the exe.
-
-- **Command**: `E:\path\to\mcp-markdown-rag.exe`
-- **Arguments**: *(empty)*
-
-**B. `dotnet run` (no publish needed, handy during development)**
-
-- **Command**: `dotnet`
-- **Arguments** (one per line):
-  ```
-  run
-  --project
-  E:\path\to\markdown_rag_mcp_dotnet
-  -c
-  Release
-  ```
-
-**C. `dotnet` pointing at the built dll**
-
-- **Command**: `dotnet`
-- **Arguments** (one per line):
-  ```
-  E:\path\to\markdown_rag_mcp_dotnet\bin\Release\net10.0\mcp-markdown-rag.dll
-  ```
-
-Click **Connect**. The lower-left panel should show the server name `mcp-markdown-rag` and the
-three tools (`index_documents`, `search_documents`, `clear_index`).
-
-> ⚠️ **First tool call may still wait for the model.** The server begins preloading the model
-> (~90 MB) in the background at startup, right after the `initialize` handshake. If you call
-> a tool before that preload finishes, the call waits for it — this can look like a hang on the
-> very first run. Watch the inspector's log panel (it logs `Embedding model preload complete.`);
-> once loaded, all calls return promptly and the model is cached on disk for next time.
-
-> ⏱️ **Raising the inspector's request timeout for large corpora.** The MCP inspector cancels
-> a tool call after **60 000 ms (60 s)** by default — embedding thousands of chunks on CPU can
-> take longer than that. To index large folders through the inspector you must raise its
-> **Request Timeout**:
-> - In the inspector UI, open the **Settings** panel (top toolbar) and set **Request Timeout**
->   to **600000** (10 minutes = 60 000 × 10). `0` means "SDK default" (60 s) — set a concrete
->   number, not 0.
-> - The value is stored under `~/.mcp-inspector/storage/` (and in the browser's `localStorage`
->   key `mcp-inspector` for the web UI), so it persists across sessions.
-> - The server cannot change this: it is the *client's* request timeout, and a JSON-RPC server
->   has no way to force a client to wait longer. The server does emit `notifications/progress`
->   during indexing (see below), which clients that honor progress use to reset their idle
->   timer — but the inspector's hard request timeout still applies, so raise it for big runs.
-> - Alternative: index smaller subtrees, or call `index_documents` from a client with a higher
->   / no timeout (e.g. a small script over stdio).
-
-### Using the tools directly
-
-Once the server is registered with a host, the LLM calls these tools for you. You can also
-drive them directly for manual indexing — e.g. when you want to index a folder of markdown
-notes on demand. The fastest way is the MCP inspector (`npx @modelcontextprotocol/inspector`),
-which gives you a UI to call each tool. Example tool calls:
+### Example tool calls
 
 **Index a folder (incremental, recursive):**
 
@@ -345,20 +206,7 @@ which gives you a UI to call each tool. Example tool calls:
 }
 ```
 
-`current_working_directory` is the base path; `directory` is resolved relative to it (use `""`
-to index the base itself). Returns something like:
-
-```json
-{
-  "message": "Incremental update",
-  "processedFiles": 3,
-  "totalChunks": 42,
-  "files": ["design.md", "roadmap.md", "meeting-notes.md"],
-  "mode": "Incremental update"
-}
-```
-
-**Force a full rebuild of a subfolder:**
+**Force a full reindex of a subdirectory:**
 
 ```json
 {
@@ -372,416 +220,163 @@ to index the base itself). Returns something like:
 **Search the indexed content:**
 
 ```json
-{ "query": "how does the auth middleware refresh tokens?", "k": 5 }
+{ "query": "How does the auth middleware refresh tokens?", "k": 5 }
 ```
 
 **Clear the index:**
 
 ```json
-{}
+{ }
 ```
 
-> The first `index_documents` (or `search_documents`) call triggers the one-time model
-> download, so expect a delay on first use. Subsequent calls use the cached model.
+## Docker deployment
 
-> ⏱️ **Large corpora & request timeouts.** Embedding thousands of chunks on CPU can take
-> several minutes, longer than many clients' default request timeout (the MCP inspector uses
-> ~60 s). To prevent the client from cancelling mid-index, `index_documents` reports
-> `notifications/progress` after every embedding batch when the client supplies a progress
-> token. Clients that honor progress notifications (the inspector does, when you enable
-> progress in its settings) reset their idle timer on each update and keep the call alive until
-> it completes. If your client does not send a progress token, the server simply runs without
-> notifications — for very large corpora on such a client, prefer indexing smaller subtrees or
-> raising the client's timeout.
+Build the image and run it either manually or via compose. The container runs the **HTTP**
+transport; the index database and the model cache are volume-backed so they survive
+recreation.
 
-### Differences from the Python original
+### docker compose (recommended)
+
+```bash
+docker compose up -d --build
+```
+
+`docker-compose.yml` configures everything through environment variables:
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `MarkdownRag__Transport` | `Http` | Streamable HTTP inside the container |
+| `MarkdownRag__TransportSettings__HttpEndpointUrl` | `http://0.0.0.0:8080` | Bind every interface |
+| `MarkdownRag__TransportSettings__HttpRoutePrefix` | `mcp` | MCP endpoint at `/mcp` |
+| `MarkdownRag__TransportSettings__Stateless` | `true` | Independent HTTP requests |
+| `MarkdownRag__DatabasePath` | `/app/.db` | Volume-backed index database |
+| `MarkdownRag__Embedding__ModelCachePath` | `/app/.models/embeddings` | Volume-backed model cache |
+
+Volumes (created under the compose project directory):
+
+- `./db` → `/app/.db` — `index_tracking.json` + `vectors.json` survive restarts.
+- `./hf-models` → `/app/.models/embeddings` — the ONNX model is downloaded once; the volume
+  prevents re-downloading when the container is recreated.
+- `./docs` → `/data/docs` (optional, commented out) — mount your markdown corpora so
+  `index_documents` can index them with
+  `current_working_directory=/data/docs` (+ `directory=<subdir>`).
+
+The MCP endpoint after deployment: `http://<host>:8080/mcp`.
+
+### Manual docker build
+
+```bash
+docker build -t mcp-markdown-rag:latest .
+docker run -d --name mcp-markdown-rag -p 8080:8080 \
+  -e MarkdownRag__Transport=Http \
+  -e MarkdownRag__TransportSettings__HttpEndpointUrl=http://0.0.0.0:8080 \
+  -e MarkdownRag__TransportSettings__HttpRoutePrefix=mcp \
+  -e MarkdownRag__TransportSettings__Stateless=true \
+  -e MarkdownRag__DatabasePath=/app/.db \
+  -e MarkdownRag__Embedding__ModelCachePath=/app/.models/embeddings \
+  -v "$PWD/db:/app/.db" \
+  -v "$PWD/hf-models:/app/.models/embeddings" \
+  -v "$PWD/docs:/data/docs" \
+  mcp-markdown-rag:latest
+```
+
+> The Dockerfile publishes with `/p:UseAppHost=false /p:DebugType=None` (dll entrypoint,
+> no PDBs) and the runtime stage is `mcr.microsoft.com/dotnet/aspnet:10.0`, matching the
+> Kestrel-based Streamable HTTP transport. `.dockerignore` excludes `bin/`, `obj/`,
+> `tests/`, `.db/`, `.models/` and docs so the build context stays small and the image
+> carries no pre-existing index or model.
+
+## Tests
+
+The test suite boots the real application pipeline and covers the full link —
+unit level (chunker, storage, orchestration) and integration level (the real `/mcp`
+endpoint over TestServer):
+
+| Area | File | What it asserts |
+|------|------|-----------------|
+| Unit | `tests/McpMarkdownRag.Tests/Unit/MarkdownChunkerTests.cs` | Heading split + token re-split with overlap, empty input handling |
+| Unit | `tests/McpMarkdownRag.Tests/Unit/StorageTests.cs` | md5+mtime fingerprinting, JSON tracking persistence, file discovery (dot-prefixed dirs skipped in recursive mode), vector store insert/search/delete/drop |
+| Unit | `tests/McpMarkdownRag.Tests/Unit/MarkdownRagServiceTests.cs` | Full lifecycle with a deterministic fake embedding provider + in-memory mock filesystem: nonexistent directory message, incremental → nothing-to-do, search output, full reindex, clear |
+| Integration | `tests/McpMarkdownRag.Tests/Integration/McpIntegrationTests.cs` | Real `/mcp` Streamable HTTP contract: `initialize` (serverInfo + instructions), `tools/list` (three tools), the complete `index_documents` → `search_documents` → `clear_index` flow with the original message strings, plus a DI-wiring sanity check |
+
+The integration fixture swaps the ONNX pipeline for a deterministic
+`FakeEmbeddingProvider` (and the BERT tokenizer for a lightweight one), so no model download
+or network access happens during tests. Run everything:
+
+```bash
+dotnet test tests/McpMarkdownRag.Tests
+```
+
+Code coverage collection is wired via `coverlet.collector`:
+
+```bash
+dotnet test tests/McpMarkdownRag.Tests --collect "XPlat,Code Coverage"
+```
+
+## Project layout
+
+| Area | File(s) | Purpose |
+|------|---------|---------|
+| Host | `Program.cs` | Host + DI wiring; stdio *or* Streamable HTTP transport, logging→stderr |
+| Tools | `Tools/MarkdownRagTools.cs` | Thin MCP tool adapters (`[McpServerTool]` methods) |
+| Orchestration | `Services/MarkdownRagService.cs` | Indexing/search orchestration |
+| Preload | `Services/EmbeddingPreloadHostedService.cs` | Background model preload at startup |
+| Abstractions | `Abstractions/*.cs` | `IEmbeddingProvider`, `IVectorStore`, `IMarkdownChunker`, `IIndexTracker`, `IMarkdownFileDiscovery`, `ITextTokenizer` |
+| Chunking | `Chunking/MarkdownChunker.cs` | Heading split → token split (512 / 100 overlap) |
+| Embeddings | `Embeddings/*.cs` | ONNX embedding provider + BERT tokenizer + model downloader |
+| Storage | `Storage/*.cs` | In-memory vector store, JSON index tracker, file discovery |
+| Config | `Configuration/`, `appsettings.json` | Strongly-typed appsettings options |
+| Tests | `tests/McpMarkdownRag.Tests/` | Unit + full-link integration tests (TestServer) |
+| Docker | `Dockerfile`, `docker-compose.yml`, `.dockerignore` | Container deployment |
+
+## How the design principles are applied
+
+**High extensibility** — every external dependency sits behind an interface and is
+registered exactly once in `Program.cs` (DI). Swapping the in-memory store for a Milvus
+client, the ONNX embeddings for a cloud embedding API, or the chunker for an alternative
+costs a single DI registration change. The tools and the orchestration service never
+reference a concrete implementation.
+
+**Configuration only in appsettings** — there is no command-line surface. `appsettings.json`
+controls the transport (stdio vs. HTTP), the HTTP bind URL/route, the database path,
+collection name, embedding model + dimension, chunk size/overlap, default search limit, and
+batch size. Tool arguments (`directory`, `recursive`, `force_reindex`, `k`) keep the
+original defaults.
+
+**Functional parity** — same three tools, same arguments and defaults, same
+incremental-vs-full reindex semantics, same md5+mtime change detection, same
+`---`-separated search output, same message strings, and the same server name/version/
+instructions string as the Python original.
+
+**Local-first** — the original embeds Milvus Lite (Python-only) and pymilvus's bundled
+embedding function; both are replaced with local-first defaults (a JSON-persisted in-memory
+vector store and an ONNX embedding provider) that preserve the privacy guarantee. The ONNX
+model is downloaded from Hugging Face on first run and cached locally, mirroring the
+original's "first run downloads the model" experience.
+
+## Differences from the Python original
 
 - **Vector store** — the original embeds Milvus Lite (Python-only). This port uses an
-  in-memory store persisted as JSON behind the `IVectorStore` abstraction, preserving the
-  local-first philosophy. A Milvus-backed implementation can be added by implementing the
-  interface.
+  in-memory vector store persisted to JSON, hidden behind `IVectorStore`; implementing that
+  interface wires in Milvus or any other vector DB.
 - **Embeddings** — the original uses pymilvus's bundled `DefaultEmbeddingFunction`. This
-  port runs a Hugging Face sentence-transformer model exported to ONNX via
-  `Microsoft.ML.OnnxRuntime`, with mean-pooling and L2 normalization (the same
-  post-processing). Provider is swappable via `IEmbeddingProvider`.
-- **Chunking** — the original uses LlamaIndex's `MarkdownNodeParser` + `TokenTextSplitter`.
-  This port reproduces that two-stage pipeline (heading-based split, then token-size split with
-  overlap) in managed code, using the model's own BERT tokenizer for token counts.
+  port runs a Hugging Face sentence-transformer exported to ONNX through
+  `Microsoft.ML.OnnxRuntime` (CPU provider by default; CUDA/DirectML extensions can be
+  swapped in via DI without touching call sites), with mean-pooling + L2 normalization —
+  the same post-processing as the original. Swappable via `IEmbeddingProvider`.
+- **Chunking** — the original uses LlamaIndex's `MarkdownNodeParser` +
+  `TokenTextSplitter`. This port replicates the two-stage pipeline in managed code (split
+  by heading first, then re-split by token size with overlap), token-counted with the
+  model's BERT tokenizer.
+- **Dot-dir skipping is enforced by the server itself** — recursive enumeration filters
+  dot-prefixed directory segments (`EnumerationOptions` has no dot-dir flag), guaranteeing
+  the original behavior on Windows, Linux and macOS alike.
 
-### License
+## License
 
 Apache 2.0, matching the upstream project.
 
 ---
 
-## 中文
 
-一个 **Model Context Protocol (MCP)** 服务器，为你的 Markdown 文档提供**本地优先的 RAG
-引擎**。本项目是
-[MCP-Markdown-RAG](https://github.com/Zackriya-Solutions/MCP-Markdown-RAG) 的 .NET 10 忠实复刻，
-保留了原项目的行为与工具接口，同时采用清晰、高可扩展的 .NET 设计。
-
-✅ **本地优先、隐私安全** —— 所有数据在本地处理与存储，索引过程不会把任何内容发送到第三方服务。
-
-✅ **Markdown 语义搜索** —— 按语义含义而非关键字查找文档片段。
-
-✅ **兼容 MCP** —— 可接入任何支持 MCP 的宿主（Claude Desktop、Windsurf、Cursor 等）。
-
-✅ **两种传输方式** —— 既可作为 stdio 子进程运行（默认），也可作为基于 Kestrel 的 Streamable HTTP 服务运行，由 `appsettings.json` 选择。
-
-✅ **高可扩展** —— 所有外部依赖（嵌入、向量存储、分块、文件发现、索引追踪）都隐藏在接口背后，
-通过 DI 替换实现即可，调用方无需改动。
-
-### 工具（Tools）
-
-服务器暴露三个工具，语义与原项目完全一致：
-
-| 工具 | 说明 | 参数 |
-|------|------|------|
-| `index_documents` | 将 Markdown 文件索引进本地向量库。默认增量索引；`force_reindex=true` 时全量重建。 | `current_working_directory`（必填）、`directory`（默认 `""`）、`recursive`（默认 `false`）、`force_reindex`（默认 `false`） |
-| `search_documents` | 对已索引的片段做语义搜索。 | `query`（必填）、`k`（默认 `5`） |
-| `clear_index` | 清空向量集合并重置追踪文件。 | 无 |
-
-索引模式与原项目一致：
-
-- **全量重建**（`force_reindex=true`）—— 清空并从零重建整个索引。
-- **增量更新**（默认）—— 通过 md5 哈希 + 修改时间的追踪文件检测变更文件，删除其旧分块后只重新嵌入这些文件。
-- **递归索引**（`recursive=true`）—— 递归进入子目录，跳过以点开头的目录。
-
-### 项目结构
-
-| 区域 | 文件 | 作用 |
-|------|------|------|
-| 宿主 | `Program.cs` | 宿主 + DI 装配；支持 stdio 或 Streamable HTTP 传输，日志输出到 stderr |
-| 工具 | `Tools/MarkdownRagTools.cs` | 精简的 MCP 工具适配器（`[McpServerTool]` 方法） |
-| 编排 | `Services/MarkdownRagService.cs` | 索引/搜索的编排逻辑 |
-| 抽象 | `Abstractions/*.cs` | `IEmbeddingProvider`、`IVectorStore`、`IMarkdownChunker`、`IIndexTracker`、`IMarkdownFileDiscovery`、`ITextTokenizer` |
-| 分块 | `Chunking/MarkdownChunker.cs` | 按标题切分 → 按 token 切分（512 / 100 重叠） |
-| 嵌入 | `Embeddings/*.cs` | ONNX 嵌入提供者 + BERT 分词器 + 模型下载 |
-| 存储 | `Storage/*.cs` | 内存向量存储、JSON 索引追踪、文件发现 |
-| 配置 | `Configuration/`、`appsettings.json` | 强类型 appsettings 选项 |
-
-### 设计原则如何落地
-
-**高可扩展** —— 每个外部依赖都位于接口背后，且在 `Program.cs` 的 DI 中只注册一次。把内存向量库换成
-Milvus 客户端、把 ONNX 嵌入换成云端嵌入 API、或换用别的分块器，都只需改一行 DI 注册。工具层与
-编排服务从不直接引用具体实现。
-
-**配置仅写在 appsettings** —— 没有命令行参数。`appsettings.json` 控制传输方式（stdio 还是
-HTTP）、HTTP 绑定 URL/路由、数据库路径、集合名、嵌入模型与维度、分块大小/重叠、默认搜索数量、批大小。工具参数
-（`directory`、`recursive`、`force_reindex`、`k`）保持原项目的默认值。
-
-**功能一致性** —— 同样三个工具、同样的参数与默认值、同样的增量/全量索引语义、同样的 md5+mtime 变更
-检测、同样的以 `---` 分隔的搜索输出、同样的「Already up to date / Directory does not exist」提示，
-以及与 Python 原项目一致的服务器名称/版本/指令字符串。
-
-**本地优先** —— 原项目内嵌 Milvus Lite（仅 Python 可用）和 pymilvus 自带的嵌入函数；本项目用本地优先
-的默认实现替代（JSON 持久化的内存向量库 + ONNX 嵌入提供者），保留了隐私特性。ONNX 模型在首次运行时
-从 Hugging Face 下载并本地缓存，与原项目「首次运行下载模型」的体验一致。
-
-### 配置
-
-所有配置固定在 [`appsettings.json`](appsettings.json) 的 `MarkdownRag` 节：
-
-```jsonc
-{
-  "MarkdownRag": {
-    "Transport": "Stdio",                  // "Stdio"（默认）或 "Http"（Streamable HTTP）
-    "TransportSettings": {
-      "HttpEndpointUrl": "http://localhost:3001", // Kestrel 绑定 URL（仅 Transport=Http 时生效）
-      "HttpRoutePrefix": "",                // 路由前缀，如 "/mcp"；"" 表示根路径
-      "Stateless": true                     // 无状态模式（服务端推荐）
-    },
-    "DatabasePath": "./.db",                 // 追踪文件与向量库文件所在目录
-    "CollectionName": "markdown_vectors",
-    "TrackingFileName": "index_tracking.json",
-    "VectorStoreFileName": "vectors.json",
-
-    "Embedding": {
-      "Provider": "Onnx",                    // 嵌入提供者的 DI 标识
-      "Dimension": 768,                      // 必须与所选模型一致
-      "ModelId": "sentence-transformers/all-MiniLM-L6-v2",
-      "ModelCachePath": "./.models/embeddings",// 首次下载的模型存放目录
-      "MaxSequenceLength": 256,
-      "PoolingMode": "Mean"
-    },
-    "Chunking": { "ChunkSize": 512, "ChunkOverlap": 100 },
-    "Search":   { "DefaultLimit": 5 },
-    "Indexing":  { "BatchSize": 32 }          // 每批嵌入的文档数
-  }
-}
-```
-
-> **传输方式选择** —— `Transport` 在两种 MCP 传输间切换：
-> - `"Stdio"`（默认）—— 经 stdin/stdout 的 JSON-RPC；服务器作为宿主（Claude Desktop、Cursor、
->   Claude Code 等）的子进程运行。日志强制输出到 stderr。
-> - `"Http"` —— 经 Kestrel 的 Streamable HTTP，监听 `HttpEndpointUrl`。适用于网络宿主
->   （配置 HTTP server URL 的 Claude Desktop、远程容器、Web 客户端）。推荐 `Stateless=true`；
->   仅当客户端需要服务端发起的请求（采样/elicitation）时才设为 false，本服务器不会发起此类请求。
->   `Transport=Stdio` 时 `TransportSettings` 下的任何设置都会被忽略。
->
-> 每个配置项也可用环境变量覆盖，使用标准的 `__` 分段写法，例如 `MarkdownRag__Transport=Http`
-> 或 `MarkdownRag__TransportSettings__HttpEndpointUrl=http://0.0.0.0:8080`。
-
-> **首次运行：** 嵌入模型（约 90 MB）会自动从 Hugging Face 下载并缓存到 `ModelCachePath`。为避免
-> 首次调用超时，服务器在启动时会开启**后台预加载**：在 MCP 握手进行的同时下载模型并构建 ONNX
-> 会话。若工具调用在预加载完成前到达，它会等待加载完成。工具调用还把多个文本**批量**送入一次 ONNX
-> 前向推理，使首次调用延迟远低于客户端超时。
->
-> **模型放置（手工 / 离线）：** 如果你自己提前下载模型，把两个文件放到下面的缓存目录（不存在则新建）。
-> 当两个文件都存在时，服务器会跳过下载。
->
-> ```
-> .models/embeddings/sentence-transformers/all-MiniLM-L6-v2/
-> ├── model.onnx   ← 来自 huggingface.co/.../onnx/model.onnx（约 90 MB）
-> └── vocab.txt    ← 来自 huggingface.co/.../vocab.txt
-> ```
->
-> 路径规则是 `<ModelCachePath>/<ModelId 中的斜杠转为目录分隔符>/`。按上方默认配置、且 exe 从自身目录
-> 运行时，即为 `./.models/embeddings/sentence-transformers/all-MiniLM-L6-v2/`。若修改 `ModelId`，
-> 子目录名相应改变。
-
-### 安装与运行
-
-发布为可执行文件：
-
-```bash
-dotnet publish -c Release -r win-x64 --self-contained false
-# 产物：bin/Release/net10.0/win-x64/publish/mcp-markdown-rag.exe
-```
-
-（如需不依赖 .NET 运行时的完全自包含构建，使用 `--self-contained true`。）
-
-### 配置 MCP 宿主
-
-#### Claude Code（直接指向编译出的 .exe）
-
-在 Claude Code 中编辑 `.mcp.json`（项目级或用户级），把 `command` 直接指向编译产物，无需
-`dotnet run`：
-
-```json
-{
-  "mcpServers": {
-    "markdown_rag": {
-      "command": "E:\\path\\to\\mcp-markdown-rag.exe",
-      "args": []
-    }
-  }
-}
-```
-
-> exe 会从自身所在目录读取 `appsettings.json`，因此请把配置好的 `appsettings.json` 放在
-> `mcp-markdown-rag.exe` 旁边。Linux/macOS 上使用正斜杠路径指向 `mcp-markdown-rag` 可执行文件。
-
-#### HTTP（Streamable HTTP 传输）
-
-在 `appsettings.json` 中把 `Transport` 设为 `Http`（并在 `TransportSettings` 下配置
-`HttpEndpointUrl` / `HttpRoutePrefix` / `Stateless`），然后直接运行 exe。服务器会监听配置的 URL，
-并在根路径（或 `HttpRoutePrefix` 指定的子路径如 `/mcp`）暴露 MCP Streamable HTTP 端点。
-
-```jsonc
-{
-  "MarkdownRag": {
-    "Transport": "Http",
-    "TransportSettings": {
-      "HttpEndpointUrl": "http://localhost:3001",
-      "HttpRoutePrefix": "",
-      "Stateless": true
-    }
-    // …其余 MarkdownRag 配置不变
-  }
-}
-```
-
-```bash
-./mcp-markdown-rag.exe        # 现在监听 http://localhost:3001
-```
-
-然后在支持 HTTP 的 MCP 宿主里指向该 URL。以 Claude Desktop（Streamable HTTP）为例：
-
-```json
-{
-  "mcpServers": {
-    "markdown_rag": {
-      "url": "http://localhost:3001"
-    }
-  }
-}
-```
-
-> **安全。** 默认 `HttpEndpointUrl` 绑定 `localhost`，仅本机可访问。若要绑定 `0.0.0.0` 或公网网卡
-> 以跨机器共享，请放到反向代理后面，由代理统一处理鉴权与 TLS，并配置 ASP.NET Core 的 `AllowedHosts`
-> 而非使用通配符。服务器本身不带鉴权，面向可信的本地/回环使用场景。
->
-> **`Stateless` 模式。** 默认 `true`（推荐）：每个 HTTP 请求相互独立，服务器不保留会话状态，也不会
-> 向客户端发起请求。仅当客户端需要采样/elicitation 回调时才设为 `false`，本服务器不使用此类回调。
-
-#### Claude Desktop / Windsurf / Cursor（dotnet run 方式）
-
-```json
-{
-  "mcpServers": {
-    "markdown_rag": {
-      "command": "dotnet",
-      "args": [
-        "run",
-        "--project",
-        "/你的/绝对/路径/markdown_rag_mcp_dotnet",
-        "-c",
-        "Release"
-      ]
-    }
-  }
-}
-```
-
-#### 用 MCP inspector 调试
-
-启动 inspector 界面：
-
-```bash
-npx @modelcontextprotocol/inspector
-```
-
-在 inspector 里打开 **Add Server** 填写字段。本服务同时支持 stdio（本地进程）和 Streamable
-HTTP —— 选择对应的 **Transport Type**。
-
-**Stdio** —— 把 **Transport Type** 选为 `STDIO`。其余字段如下：
-
-| 字段 | 填什么 |
-|------|--------|
-| **Transport Type** | `STDIO` |
-| **Command** | 启动服务器的可执行命令（见下方三种方式） |
-| **Arguments** | 传给命令的参数，每行一个。直接用 `.exe` 时留空。 |
-| **Environment Variables** | 额外环境变量（键值对）。本服务不需要，留空。 |
-
-**HTTP** —— 把 **Transport Type** 选为 `STREAMABLE HTTP`，然后指向已运行的服务器。
-
-- **URL**：`http://localhost:3001/`（即你配置的 `HttpEndpointUrl` + `HttpRoutePrefix`；需先用
-  `Transport=Http` 启动服务器）。
-
-从下面三种启动方式中选一种：
-
-**A. 直接用 `.exe`（最快，推荐）** —— 需先 `dotnet publish`（见「安装与运行」），并把配置好的
-`appsettings.json` 放在 exe 同目录。
-
-- **Command**: `E:\path\to\mcp-markdown-rag.exe`
-- **Arguments**: *（留空）*
-
-**B. `dotnet run`（无需先 publish，开发期最方便）**
-
-- **Command**: `dotnet`
-- **Arguments**（每行一个）：
-  ```
-  run
-  --project
-  E:\path\to\markdown_rag_mcp_dotnet
-  -c
-  Release
-  ```
-
-**C. `dotnet` 指向已构建的 dll**
-
-- **Command**: `dotnet`
-- **Arguments**（每行一个）：
-  ```
-  E:\path\to\markdown_rag_mcp_dotnet\bin\Release\net10.0\mcp-markdown-rag.dll
-  ```
-
-点 **Connect**。左下角面板应显示服务器名 `mcp-markdown-rag` 与三个工具
-（`index_documents`、`search_documents`、`clear_index`）。
-
-> ⚠️ **首次调用工具可能仍在等待模型加载。** 服务器在 `initialize` 握手后会立即在后台预加载模型
-> （约 90 MB）。若你在预加载完成前就调用工具，该调用会等待加载完成——在首次运行时这看起来像卡住。
-> 留意 inspector 的日志区（加载完成会打印 `Embedding model preload complete.`）；加载完成后所有调用都会
-> 迅速返回，且模型已缓存到磁盘，下次启动无需再下载。
-
-> ⏱️ **为大批量语料调高 Inspector 的请求超时。** MCP Inspector 默认在 **60 000 毫秒（60 秒）**后取消
-> 工具调用——在 CPU 上嵌入成千上万个片段可能超过这个时间。要通过 Inspector 索引大目录，必须调高其
-> **Request Timeout**：
-> - 在 Inspector 界面打开顶部工具栏的 **Settings** 面板，把 **Request Timeout** 设为
->   **600000**（10 分钟 = 60 000 × 10）。`0` 表示「SDK 默认值」（即 60 秒）——要填具体数字，不要填 0。
-> - 该值保存在 `~/.mcp-inspector/storage/`（Web 界面则存在浏览器的 `localStorage` 键 `mcp-inspector`），
->   跨会话保留。
-> - 服务器无法修改它：这是**客户端**的请求超时，JSON-RPC 服务器无法强制客户端等待更久。索引期间
->   服务器会发送 `notifications/progress` 进度通知（见下文），遵守进度通知的客户端据此重置空闲计时器——
->   但 Inspector 的硬请求超时仍生效，故大批量运行时需调高它。
-> - 备选：分批索引较小子目录，或用超时更高 / 无超时的客户端（如经 stdio 的小脚本）调用
->   `index_documents`。
-
-### 直接使用工具
-
-服务器在宿主中注册后，LLM 会替你调用这些工具。你也可以手动驱动它们来做按需索引——例如需要手工对一
-批 Markdown 笔记建索引时。最便捷的方式是用 MCP inspector（`npx @modelcontextprotocol/inspector`），
-它提供图形界面来逐个调用工具。示例调用：
-
-**索引一个目录（增量、递归）：**
-
-```json
-{
-  "current_working_directory": "/home/me/notes",
-  "directory": "",
-  "recursive": true,
-  "force_reindex": false
-}
-```
-
-`current_working_directory` 是基准路径；`directory` 相对于它解析（用 `""` 表示索引基准目录本身）。返回示例：
-
-```json
-{
-  "message": "Incremental update",
-  "processedFiles": 3,
-  "totalChunks": 42,
-  "files": ["design.md", "roadmap.md", "meeting-notes.md"],
-  "mode": "Incremental update"
-}
-```
-
-**强制全量重建某个子目录：**
-
-```json
-{
-  "current_working_directory": "/home/me",
-  "directory": "projects/wiki",
-  "recursive": true,
-  "force_reindex": true
-}
-```
-
-**搜索已索引内容：**
-
-```json
-{ "query": "鉴权中间件是如何刷新令牌的？", "k": 5 }
-```
-
-**清空索引：**
-
-```json
-{}
-```
-
-> 首次调用 `index_documents`（或 `search_documents`）会触发一次性的模型下载，因此首次使用会有延迟；
-> 之后调用都使用缓存模型。
-
-> ⏱️ **大批量语料与请求超时。** 在 CPU 上嵌入成千上万个片段可能需要几分钟，超过许多客户端的默认
-> 请求超时（MCP Inspector 约为 60 秒）。为防止客户端在索引中途取消，当客户端提供 progress token
-> 时，`index_documents` 会在每批嵌入完成后发送 `notifications/progress` 进度通知。遵守进度通知的客户端
-> （Inspector 在其设置中开启 progress 后即遵守）会在每次更新时重置空闲计时器，使调用保持存活直至完成。
-> 若你的客户端未发送 progress token，服务器只是不发送通知照常运行——对超大语料建议分批索引较小子目录，
-> 或调高客户端的超时设置。
-
-### 与 Python 原项目的差异
-
-- **向量库** —— 原项目内嵌 Milvus Lite（仅 Python 可用）。本移植使用持久化为 JSON 的内存向量库，
-  隐藏在 `IVectorStore` 抽象背后，保留了本地优先的理念。实现该接口即可接入 Milvus。
-- **嵌入** —— 原项目使用 pymilvus 自带的 `DefaultEmbeddingFunction`。本移植通过
-  `Microsoft.ML.OnnxRuntime` 运行导出为 ONNX 的 Hugging Face sentence-transformer 模型，并做
-  mean-pooling 与 L2 归一化（与原项目相同的后处理）。通过 `IEmbeddingProvider` 可替换提供者。
-- **分块** —— 原项目使用 LlamaIndex 的 `MarkdownNodeParser` + `TokenTextSplitter`。本移植用托管
-  代码复刻了这套两阶段流水线（先按标题切分，再按 token 大小带重叠切分），token 计数使用模型自带的
-  BERT 分词器。
-
-### 许可证
-
-Apache 2.0，与上游项目一致。
+[中文版本](README.zh.md)

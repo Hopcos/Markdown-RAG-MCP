@@ -1,0 +1,16 @@
+**/bin
+**/obj
+**/tests
+**/TestResults
+.vs
+.git
+*.md
+*.log
+logs
+# Index database and model cache are mounted at runtime, never baked into the image.
+**/.db
+**/.models
+# Local scratch folders used by diagnostics.
+**/.stage-run
+# Local configuration overrides (may contain credentials).
+**/appsettings.Development.json

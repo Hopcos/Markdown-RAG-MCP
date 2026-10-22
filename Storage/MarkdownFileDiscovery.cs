@@ -41,12 +41,41 @@ public sealed class MarkdownFileDiscovery : IMarkdownFileDiscovery
         {
             // EnumerateFiles(*.md) is case-insensitive on Windows but case-sensitive on
             // Linux; normalize so behavior matches across platforms.
-            if (path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            if (!path.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
             {
-                result.Add(Path.GetFullPath(path));
+                continue;
             }
+
+            // Skip dot-prefixed directories in recursive mode, matching the original
+            // list_md_files behavior. EnumerationOptions has no dot-dir flag, so filter
+            // by the relative path segments instead.
+            if (recursive && ContainsDotDirectory(path, directory))
+            {
+                continue;
+            }
+
+            result.Add(Path.GetFullPath(path));
         }
         return result;
+    }
+
+    /// <summary>True when the file's path (relative to <paramref name="root"/>)
+    /// traverses a directory segment whose name starts with '.'.</summary>
+    private static bool ContainsDotDirectory(string path, string root)
+    {
+        var relative = Path.GetRelativePath(root, path);
+        var segments = relative.Split('/', '\\');
+
+        // Last segment is the file name; only directory segments (all but the last)
+        // are considered for the dot-prefix rule.
+        for (var i = 0; i < segments.Length - 1; i++)
+        {
+            if (segments[i].StartsWith('.'))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     public async Task<IReadOnlyList<string>> GetChangedFilesAsync(string directory, bool recursive, CancellationToken ct = default)
