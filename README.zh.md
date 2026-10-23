@@ -254,6 +254,32 @@ HTTP**：URL）后连接。服务器上报 `mcp-markdown-rag`，含上述三个�
 > （Settings 面板）调大该超时——服务器在每批嵌入完成后会推送
 > `notifications/progress`，支持进度通知的客户端会重置空闲计时器。
 
+### 5. 只携带向量索引部署到纯查询服务器
+
+查询永远不读取原始 markdown 文件：持久化的每条向量记录都把分块**原文**和源**文件名**
+内嵌在 `vectors.json` 里，`search_documents` 完全只从向量库作答。查询机上既不需要
+`.md` 源文件，也不需要增量跟踪文件（`index_tracking.json`）。
+
+```bash
+# 1. 照常在本地索引。
+dotnet run -lp hopcos   # http://localhost:3001 → index_documents
+
+# 2. 只把持久化索引复制到远程服务器（保持相同相对路径）：
+#    <DatabasePath>/vectors.json   （默认：./.db/vectors.json）
+
+# 3. 在远程启动服务器——立即可查询。
+dotnet run -lp hopcos
+```
+
+要拷贝的 | 不需要拷贝的
+---|---
+`vectors.json`（整个 `DatabasePath` 目录一并拷贝也可以） | 源 `.md` 文件、`index_tracking.json`
+
+远程机器仍需要查询语义所依赖的东西：**嵌入模型缓存**（`.models/`，必须与索引时使用
+的是同一个模型——查询文本要靠它做嵌入）以及 `Transport=Http` 的服务配置。**不要在纯
+查询服务器上调用 `index_documents`**：没有源文件时它会返回 `Directory does not exist!`，
+增量更新能力只存在于源文件所在的完整部署中。
+
 ### 工具调用示例
 
 **索引一个目录（增量、递归）：**
@@ -361,6 +387,7 @@ TestServer 的真实 `/mcp` 端点）：
 | 集成 | `tests/McpMarkdownRag.Tests/Integration/McpIntegrationTests.cs` | 真实 `/mcp` Streamable HTTP 契约：`initialize`（serverInfo + instructions）、`tools/list`（三个工具）、完整的 `index_documents` → `search_documents` → `clear_index` 流程（含原版消息字符串），外加 DI 装配健全性检查 |
 | 集成 | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | 开启鉴权的服务器夹具：无凭据与错误令牌的 MCP 请求 → 401 契约载荷；有效 Bearer 令牌完成 MCP 会话初始化并到达 `tools/list`；`/api/tools` 孪生无凭据 → 401，而 `/`、`/health` 与 `/swagger` 保持公开 |
 | 集成 | `tests/McpMarkdownRag.Tests/Integration/WebSurfaceIntegrationTests.cs` | 公开 HTTP 面端到端：根信息 + `/health` 载荷、描述 `/api/tools` 的公开 Swagger 文档、实时解析的 `/api/tools` 目录（三个工具、类型化参数行的必填/可选），以及感知环境的传输层决策（`ASPNETCORE_ENVIRONMENT=hopcos` 且不设 Transport 环境变量 → `appsettings.hopcos.json` 的 `Transport=Http` 启动 HTTP 面） |
+| 集成 | `tests/McpMarkdownRag.Tests/Integration/PortableIndexIntegrationTests.cs` | 索引可移植性：索引后**只**把 `vectors.json` 复制到全新服务器目录（无 markdown 源、无 `index_tracking.json`），`search_documents` 即可返回文件名与完整分块原文 |
 
 集成夹具把 ONNX 管道替换为确定性 `FakeEmbeddingProvider`（BERT 分词器同理替换为轻量
 实现），测试全程无模型下载、无网络访问。一键运行全部测试：

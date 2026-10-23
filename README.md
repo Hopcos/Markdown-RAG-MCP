@@ -266,6 +266,34 @@ tools above.
 > `notifications/progress` after each embedding batch, which clients that honor progress
 > notifications reset their idle timer on.
 
+### 5. Ship only the vector index to a query-only server
+
+Searching never reads the original markdown files: every persisted vector record embeds
+its chunk **text** and source **file name** inside `vectors.json`, and `search_documents`
+answers entirely from the vector store. Neither the `.md` sources nor the incremental
+tracking file (`index_tracking.json`) are needed on the querying machine.
+
+```bash
+# 1. Index locally as usual.
+dotnet run -lp hopcos   # http://localhost:3001 → index_documents
+
+# 2. Copy ONLY the persisted index to the remote server (same relative location):
+#    <DatabasePath>/vectors.json   (default: ./.db/vectors.json)
+
+# 3. Start the server on the remote box — searches work immediately.
+dotnet run -lp hopcos
+```
+
+What to copy | What NOT to copy
+---|---
+`vectors.json` (the whole `DatabasePath` directory is also fine) | source `.md` files, `index_tracking.json`
+
+The remote box still needs the things query semantics depend on: the **embedding model
+cache** (`.models/`, the same model used at indexing time — the query text is embedded
+with it) and a `Transport=Http` serving configuration. Do **not** call `index_documents` on
+the query-only server: without source files it answers `Directory does not exist!`, and the
+incremental-update feature only exists where the sources live.
+
 ### Example tool calls
 
 **Index a folder (incremental, recursive):**
@@ -377,6 +405,7 @@ endpoint over TestServer):
 | Integration | `tests/McpMarkdownRag.Tests/Integration/McpIntegrationTests.cs` | Real `/mcp` Streamable HTTP contract: `initialize` (serverInfo + instructions), `tools/list` (three tools), the complete `index_documents` → `search_documents` → `clear_index` flow with the original message strings, plus a DI-wiring sanity check |
 | Integration | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | Auth-enabled server fixture: credentials-less and wrong-token MCP requests → 401 with the contract payload; valid bearer token initializes the session and reaches `tools/list`; the `/api/tools` twin answers 401 without credentials while `/`, `/health` and `/swagger` stay public |
 | Integration | `tests/McpMarkdownRag.Tests/Integration/WebSurfaceIntegrationTests.cs` | Public HTTP surface end-to-end: root info + `/health` payload, public Swagger document describing `/api/tools`, the live `/api/tools` catalog (three tools, typed parameter rows with required/optional), and the environment-aware transport decision (`ASPNETCORE_ENVIRONMENT=hopcos` with no Transport override → `appsettings.hopcos.json`'s `Transport=Http` boots the HTTP surface) |
+| Integration | `tests/McpMarkdownRag.Tests/Integration/PortableIndexIntegrationTests.cs` | Index portability: after indexing, copying **only** `vectors.json` to a fresh server directory (no markdown sources, no `index_tracking.json`) is enough for `search_documents` to return the file name and full chunk text |
 
 The integration fixture swaps the ONNX pipeline for a deterministic
 `FakeEmbeddingProvider` (and the BERT tokenizer for a lightweight one), so no model download
