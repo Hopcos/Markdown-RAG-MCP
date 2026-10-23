@@ -173,7 +173,17 @@ public sealed class InMemoryVectorStore : IVectorStore, IDisposable
     public void Dispose()
     {
         // Best-effort flush on disposal so a graceful shutdown preserves the index.
-        try { PersistAsync().GetAwaiter().GetResult(); }
-        catch { /* swallow; disposal must not throw */ }
+        // CRITICAL: only flush when the in-memory store actually holds records. The store
+        // loads lazily and marks itself loaded on first use; a process that was started
+        // (or had its first request) before vectors.json was in place holds an EMPTY store
+        // even though a valid index exists on disk. Unconditional PersistAsync would
+        // overwrite that on-disk index with an empty array on every recycle — silently
+        // destroying data. Clearing is an explicit operation (ClearIndexAsync persists the
+        // empty state itself), so an empty in-memory store must never write back.
+        if (!_records.IsEmpty)
+        {
+            try { PersistAsync().GetAwaiter().GetResult(); }
+            catch { /* swallow; disposal must not throw */ }
+        }
     }
 }
