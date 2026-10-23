@@ -280,6 +280,57 @@ dotnet run -lp hopcos
 查询服务器上调用 `index_documents`**：没有源文件时它会返回 `Directory does not exist!`，
 增量更新能力只存在于源文件所在的完整部署中。
 
+### 6. IIS 部署与排障
+
+应用以进程内模式运行在 IIS 下（ASP.NET Core Module V2，`web.config` 中
+`hostingModel="inprocess"`）。请以框架依赖方式发布（`dotnet publish -c Release -r win-x64
+--self-contained false`），并确保服务器已安装 **.NET 10 Hosting Bundle**。任何 IIS 机器都适用的要点：
+
+- **端口**：IIS 下由*站点绑定*决定监听端口，`appsettings.json` 里的 `HttpEndpointUrl` 不生效。
+- **相对路径**（`DatabasePath`、`ModelCachePath`，即 `./.db`、`./.models`）基于进程工作目录解析，
+  也就是站点物理路径。请把 `.db/`、`.models/` 放在 `web.config` 同级，或改用绝对路径。
+- 精简发布目录时**必须保留 `runtimes\win-x64`**——服务器是 x64，实际加载的就是
+  `runtimes\win-x64\native\onnxruntime.dll`。只能删除其他 RID（linux/osx/arm64/win-x86）。
+- **拷贝索引的顺序**：先停应用（放一个 `app_offline.htm`）→ 拷贝 `vectors.json` → 再启动。
+  （`e8e8e8e` 之前的版本存在缺陷：加载了空库的进程在回收时会把磁盘上的索引覆盖成 `[]`；
+  现在空库在关闭时永不回写。）文件名必须恰好是 `vectors.json`（`VectorStoreFileName`），
+  改名后的副本（如 `vectors1.json`）会被忽略。
+- **诊断**：把 `web.config` 里的 `stdoutLogEnabled` 改为 `"true"`（修改会触发站点回收），复现调用，
+  再读 `logs\stdout_*.log`；排查完改回 `false`。MCP 客户端只能看到通用的
+  `An error occurred invoking 'search_documents'`，真正的异常在这份日志里。
+
+#### 经验教训：“本机正常，服务器 `isError`”——缺少 VC++ 运行库
+
+现象：两边文件完全一致（dll / `model.onnx` / `vocab.txt` / `vectors.json` 哈希相同），站点能启动，
+`/health` 与 `initialize` 正常，但**所有** `search_documents` / `index_documents` 调用都返回
+`isError: true`。stdout 日志显示：
+
+```
+System.TypeInitializationException: The type initializer for
+'Microsoft.ML.OnnxRuntime.NativeMethods' threw an exception.
+ ---> System.NullReferenceException ... at System.SpanHelpers.Memmove ...
+```
+
+根因：嵌入模型跑在原生 `onnxruntime.dll`（1.20）上，它依赖
+**Microsoft Visual C++ 2015-2022 Redistributable (x64)**。全新的 Windows Server 镜像默认没有它
+（`System32` 下缺 `vcruntime140.dll`、`vcruntime140_1.dll`、`msvcp140*.dll`）。1.20 原生库因此加载失败，
+.NET 静默回退去加载 Windows 自带的旧版 `C:\Windows\System32\onnxruntime.dll`（v1.5），其 API 与托管的 1.20
+绑定不匹配，静态初始化器抛异常。开发机几乎都装有该运行库（Visual Studio 会装），所以“本机能跑”。
+
+修复：在服务器上安装 `vc_redist.x64.exe`（<https://aka.ms/vs/17/release/vc_redist.x64.exe>），然后
+**回收应用池 / 修改一下 `web.config`**——失败的静态初始化器结果会在进程生命周期内被缓存，
+已经在运行的 worker 不重启就一直是坏的。
+
+服务器上的快速自检（三项都应输出 `True`）：
+
+```powershell
+'vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll' |
+  ForEach-Object { Test-Path "$env:WINDIR\System32\$_" }
+```
+
+**无效**的做法（不必再试）：精简 `runtimes\`、调整站点目录 ACL、把 VC dll 放到应用目录或
+`runtimes\win-x64\native`、把 `onnxruntime.dll` 拷到站点根目录。只有系统级安装 VC++ 运行库才有效。
+
 ### 工具调用示例
 
 **索引一个目录（增量、递归）：**

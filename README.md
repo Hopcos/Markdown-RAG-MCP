@@ -294,6 +294,66 @@ with it) and a `Transport=Http` serving configuration. Do **not** call `index_do
 the query-only server: without source files it answers `Directory does not exist!`, and the
 incremental-update feature only exists where the sources live.
 
+### 6. Hosting on IIS and troubleshooting
+
+The app runs in-process under IIS (ASP.NET Core Module V2, `hostingModel="inprocess"` in
+`web.config`). Publish framework-dependent (`dotnet publish -c Release -r win-x64
+--self-contained false`) and make sure the server has the **.NET 10 Hosting Bundle**.
+Notes that apply on any IIS box:
+
+- **Port**: under IIS the *site binding* decides the listening port; `HttpEndpointUrl` in
+  `appsettings.json` is ignored.
+- **Relative paths** (`DatabasePath`, `ModelCachePath`, `./.db`, `./.models`) resolve against
+  the process working directory, which is the site's physical path. Keep `.db/` and
+  `.models/` beside `web.config`, or use absolute paths.
+- **Keep `runtimes\win-x64`** when trimming the publish output — the server is x64, and
+  `runtimes\win-x64\native\onnxruntime.dll` is what is loaded. Only the other RIDs
+  (linux/osx/arm64/win-x86) may be removed.
+- **Copy order for the index**: stop the app (drop an `app_offline.htm`), copy
+  `vectors.json`, then start it again. (Versions before `e8e8e8e` overwrote the on-disk
+  index with `[]` when a process that had loaded an empty store was recycled; the store now
+  never flushes an empty state on shutdown.) The file must be named exactly
+  `vectors.json` (`VectorStoreFileName`) — a renamed copy such as `vectors1.json` is ignored.
+- **Diagnostics**: set `stdoutLogEnabled="true"` in `web.config` (editing it recycles the
+  site), reproduce the call, and read `logs\stdout_*.log`; turn it off again afterwards.
+  The MCP client only sees the generic `An error occurred invoking 'search_documents'`; the
+  real exception is in that log.
+
+#### Lesson learned: "works on my machine, `isError` on the server" — missing VC++ runtime
+
+Symptom: identical files (same dll / `model.onnx` / `vocab.txt` / `vectors.json` hashes), the
+site starts, `/health` and `initialize` are fine, but **every** `search_documents` /
+`index_documents` call returns `isError: true`. The stdout log shows:
+
+```
+System.TypeInitializationException: The type initializer for
+'Microsoft.ML.OnnxRuntime.NativeMethods' threw an exception.
+ ---> System.NullReferenceException ... at System.SpanHelpers.Memmove ...
+```
+
+Root cause: the embedding model runs on the native `onnxruntime.dll` (1.20), which needs the
+**Microsoft Visual C++ 2015-2022 Redistributable (x64)**. A fresh Windows Server image does
+not have it (`System32\vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140*.dll` missing).
+The native 1.20 library then fails to load, .NET silently falls back to the old
+Windows-bundled `C:\Windows\System32\onnxruntime.dll` (v1.5), and its API does not match the
+managed 1.20 binding, so the static initializer throws. Developer machines almost always have
+the redistributable (installed by Visual Studio), which is why it "works locally".
+
+Fix: install `vc_redist.x64.exe` (<https://aka.ms/vs/17/release/vc_redist.x64.exe>) on the
+server, then **recycle the app pool / touch `web.config`** — the failed static initializer is
+cached for the life of the process, so already-running workers stay broken until restarted.
+
+Quick check on the server (all three should print `True`):
+
+```powershell
+'vcruntime140.dll','vcruntime140_1.dll','msvcp140.dll' |
+  ForEach-Object { Test-Path "$env:WINDIR\System32\$_" }
+```
+
+Things that did **not** help (do not chase them): trimming `runtimes\`, ACLs on the site
+folder, copying the VC dlls beside the app or into `runtimes\win-x64\native`, or copying
+`onnxruntime.dll` into the site root. Only a system-wide VC++ runtime fixes it.
+
 ### Example tool calls
 
 **Index a folder (incremental, recursive):**
