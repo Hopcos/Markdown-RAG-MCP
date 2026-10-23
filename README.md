@@ -139,6 +139,19 @@ dotnet publish src/McpMarkdownRag -c Release -r win-x64 --self-contained false
 The exe resolves `appsettings.json` from its own directory, so place a configured copy next
 to the binary.
 
+Launch profiles work too, and the transport decision is environment-aware:
+
+```bash
+dotnet run -lp hopcos                      # ASPNETCORE_ENVIRONMENT=hopcos from the profile
+```
+
+The profile's `ASPNETCORE_ENVIRONMENT` selects the environment-specific
+`appsettings.<environment>.json` (e.g. `appsettings.hopcos.json` with `Transport=Http`), so
+the command boots the externally-exposed HTTP surface — Kestrel prints the bound URL
+("Now listening on: http://localhost:3001"). Note the precedence: `ASPNETCORE_ENVIRONMENT`
+(the variable launch profiles set) wins over `DOTNET_ENVIRONMENT`, and environment
+variables override the JSON files, so `MarkdownRag__Transport=Stdio` would switch back.
+
 ### 3. Register with an MCP host
 
 #### Claude Code (stdio, pointing at the built .exe)
@@ -363,7 +376,7 @@ endpoint over TestServer):
 | Unit | `tests/McpMarkdownRag.Tests/Security/BearerTokenMiddlewareTests.cs` | Token gate disabled when `server-token` is empty/missing; bearer header + `?access_token=` accepted; wrong/malformed/missing credentials → 401 contract payload; CORS preflight exempt; public-path exemptions (Swagger UI/document, `/`, `/health`) pass without credentials; lookalike paths stay guarded; constant-time comparison |
 | Integration | `tests/McpMarkdownRag.Tests/Integration/McpIntegrationTests.cs` | Real `/mcp` Streamable HTTP contract: `initialize` (serverInfo + instructions), `tools/list` (three tools), the complete `index_documents` → `search_documents` → `clear_index` flow with the original message strings, plus a DI-wiring sanity check |
 | Integration | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | Auth-enabled server fixture: credentials-less and wrong-token MCP requests → 401 with the contract payload; valid bearer token initializes the session and reaches `tools/list`; the `/api/tools` twin answers 401 without credentials while `/`, `/health` and `/swagger` stay public |
-| Integration | `tests/McpMarkdownRag.Tests/Integration/WebSurfaceIntegrationTests.cs` | Public HTTP surface end-to-end: root info + `/health` payload, public Swagger document describing `/api/tools`, and the live `/api/tools` catalog (three tools, typed parameter rows with required/optional) |
+| Integration | `tests/McpMarkdownRag.Tests/Integration/WebSurfaceIntegrationTests.cs` | Public HTTP surface end-to-end: root info + `/health` payload, public Swagger document describing `/api/tools`, the live `/api/tools` catalog (three tools, typed parameter rows with required/optional), and the environment-aware transport decision (`ASPNETCORE_ENVIRONMENT=hopcos` with no Transport override → `appsettings.hopcos.json`'s `Transport=Http` boots the HTTP surface) |
 
 The integration fixture swaps the ONNX pipeline for a deterministic
 `FakeEmbeddingProvider` (and the BERT tokenizer for a lightweight one), so no model download

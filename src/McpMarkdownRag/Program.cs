@@ -36,11 +36,18 @@ return;
 
 // ---------------------------------------------------------------------------
 // Stdio host: MCP speaks JSON-RPC over stdin/stdout, so all logging is
-// redirected to stderr to avoid corrupting the protocol stream.
+// redirected to stderr to avoid corrupting the protocol stream. The environment
+// is re-resolved with the ASP.NET precedence (ASPNETCORE_ENVIRONMENT, the
+// variable launch profiles like 'hopcos' set, over DOTNET_ENVIRONMENT) because
+// Host.CreateApplicationBuilder honors only the DOTNET_ variable.
 // ---------------------------------------------------------------------------
 static async Task RunStdioAsync(string[] args)
 {
-    var builder = Host.CreateApplicationBuilder(args);
+    var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+    {
+        EnvironmentName = GetAspNetEnvironment(),
+        Args = args
+    });
 
     builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
 
@@ -235,6 +242,18 @@ static async Task RunHttpAsync(string[] args)
 static string? FirstNonEmpty(params string?[] values)
     => values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
+/// <summary>
+/// Resolves the environment with the ASP.NET precedence convention: the
+/// <c>ASPNETCORE_ENVIRONMENT</c> variable (what <c>dotnet run</c>'s launch
+/// profiles set) wins over the Host-only <c>DOTNET_ENVIRONMENT</c>, defaulting
+/// to Production.
+/// </summary>
+static string GetAspNetEnvironment()
+    => FirstNonEmpty(
+        Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
+        Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"))
+        ?? "Production";
+
 // ---------------------------------------------------------------------------
 // Shared DI wiring — identical for both transports.
 // ---------------------------------------------------------------------------
@@ -286,12 +305,18 @@ static void ConfigureMcpServer(McpServerOptions options)
 }
 
 // Read the Transport setting up front to decide which host to build. The configuration
-// sources are the default ones (appsettings.json + environment overrides); a minimal
-// configuration builder is enough because the real binding happens inside each host.
+// sources are the default ones (appsettings.json, the environment-specific
+// appsettings.<environment>.json selected by ASPNETCORE_ENVIRONMENT / DOTNET_ENVIRONMENT,
+// environment overrides, command line); a minimal configuration builder is enough
+// because the real binding happens inside each host.
 static string builder_GetTransport(string[] args)
 {
     var config = new ConfigurationBuilder()
         .AddJsonFile("appsettings.json", optional: true)
+        // The environment-specific appsettings file participates in the transport
+        // decision, so a launch profile's environment (e.g. 'hopcos' setting
+        // Transport=Http in appsettings.hopcos.json) boots the HTTP surface.
+        .AddJsonFile($"appsettings.{GetAspNetEnvironment()}.json", optional: true)
         .AddEnvironmentVariables()
         .AddCommandLine(args)
         .Build();

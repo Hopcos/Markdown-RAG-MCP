@@ -10,11 +10,12 @@
     },
     "hopcos": {
       "commandName": "Project",
-      "launchBrowser": true,
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://localhost:3001",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "hopcos"
-      },
-      "applicationUrl": "http://localhost:5002"
+      }
     }
   }
 }

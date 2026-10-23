@@ -1,3 +1,4 @@
+using System.IO;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -84,6 +85,7 @@ public class WebSurfaceIntegrationTests : IClassFixture<MarkdownRagAppFactory>
     {
         using var client = CreateClient();
         var result = await client.GetFromJsonAsync<ToolCatalogResult>("/api/tools");
+        Assert.NotNull(result);
         var search = Assert.Single(result.Tools, tool => tool.Name == "search_documents");
 
         Assert.Equal(2, search.Parameters.Count);
@@ -96,5 +98,37 @@ public class WebSurfaceIntegrationTests : IClassFixture<MarkdownRagAppFactory>
         Assert.False(k.Required);
         Assert.Equal("integer", k.Type);
         Assert.Contains("Number of documents to return", k.Description);
+    }
+
+    /// <summary>
+    /// Proves the transport decision is environment-aware: with ASPNETCORE_ENVIRONMENT=hopcos
+    /// (what 'dotnet run -lp hopcos' sets from the launch profile) the decision reads
+    /// appsettings.hopcos.json (Transport=Http) and boots the externally-exposed HTTP web
+    /// surface. No Transport override is configured, so only the environment-specific
+    /// appsettings file can decide — without it the stdio host would boot and the
+    /// TestServer-backed client would fail.
+    /// </summary>
+    [Fact]
+    public async Task Transport_decision_is_environment_aware_and_boots_http_surface()
+    {
+        // The transport decision resolves the appsettings files CWD-relative, matching
+        // how 'dotnet run' starts the server inside the server project directory.
+        var serverProjectDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
+            Path.Join("..", "..", "..", "..", "..", "src", "McpMarkdownRag")));
+        var originalCwd = Directory.GetCurrentDirectory();
+        Directory.SetCurrentDirectory(serverProjectDir);
+        try
+        {
+            using var factory = new HopcosEnvironmentAppFactory();
+            using var client = factory.CreateClient();
+
+            Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/health")).StatusCode);
+            using var rootResponse = await client.GetAsync("/");
+            Assert.Equal(HttpStatusCode.OK, rootResponse.StatusCode);
+        }
+        finally
+        {
+            Directory.SetCurrentDirectory(originalCwd);
+        }
     }
 }

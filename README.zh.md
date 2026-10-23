@@ -130,6 +130,19 @@ dotnet publish src/McpMarkdownRag -c Release -r win-x64 --self-contained false
 
 exe 会从自身所在目录解析 `appsettings.json`，因此请把配置副本放在二进制同目录。
 
+也支持 launch profile，且传输层决策感知环境：
+
+```bash
+dotnet run -lp hopcos                      # 由 profile 设置 ASPNETCORE_ENVIRONMENT=hopcos
+```
+
+profile 的 `ASPNETCORE_ENVIRONMENT` 会选中环境专属的 `appsettings.<环境>.json`
+（例如 `appsettings.hopcos.json` 配置了 `Transport=Http`），因此该命令会启动对外暴露的
+HTTP 面——Kestrel 会打印绑定 URL（"Now listening on: http://localhost:3001"）。
+注意优先级：`ASPNETCORE_ENVIRONMENT`（launch profile 设置的变量）优先于
+`DOTNET_ENVIRONMENT`，且环境变量覆盖 JSON 文件，所以 `MarkdownRag__Transport=Stdio`
+可以切回 stdio。
+
 ### 3. 注册到 MCP 宿主
 
 #### Claude Code（stdio，指向构建出来的 exe）
@@ -347,7 +360,7 @@ TestServer 的真实 `/mcp` 端点）：
 | 单元 | `tests/McpMarkdownRag.Tests/Security/BearerTokenMiddlewareTests.cs` | `server-token` 为空/缺失时鉴权关闭；接受 Bearer 头与 `?access_token=`；错误/畸形/缺失凭据 → 401 契约载荷；CORS 预检放行；公开路径豁免（Swagger UI/文档、`/`、`/health`）无凭据可直达；形近路径仍受保护；恒时比较 |
 | 集成 | `tests/McpMarkdownRag.Tests/Integration/McpIntegrationTests.cs` | 真实 `/mcp` Streamable HTTP 契约：`initialize`（serverInfo + instructions）、`tools/list`（三个工具）、完整的 `index_documents` → `search_documents` → `clear_index` 流程（含原版消息字符串），外加 DI 装配健全性检查 |
 | 集成 | `tests/McpMarkdownRag.Tests/Integration/AuthTokenIntegrationTests.cs` | 开启鉴权的服务器夹具：无凭据与错误令牌的 MCP 请求 → 401 契约载荷；有效 Bearer 令牌完成 MCP 会话初始化并到达 `tools/list`；`/api/tools` 孪生无凭据 → 401，而 `/`、`/health` 与 `/swagger` 保持公开 |
-| 集成 | `tests/McpMarkdownRag.Tests/Integration/WebSurfaceIntegrationTests.cs` | 公开 HTTP 面端到端：根信息 + `/health` 载荷、描述 `/api/tools` 的公开 Swagger 文档、以及实时解析的 `/api/tools` 目录（三个工具、类型化参数行的必填/可选） |
+| 集成 | `tests/McpMarkdownRag.Tests/Integration/WebSurfaceIntegrationTests.cs` | 公开 HTTP 面端到端：根信息 + `/health` 载荷、描述 `/api/tools` 的公开 Swagger 文档、实时解析的 `/api/tools` 目录（三个工具、类型化参数行的必填/可选），以及感知环境的传输层决策（`ASPNETCORE_ENVIRONMENT=hopcos` 且不设 Transport 环境变量 → `appsettings.hopcos.json` 的 `Transport=Http` 启动 HTTP 面） |
 
 集成夹具把 ONNX 管道替换为确定性 `FakeEmbeddingProvider`（BERT 分词器同理替换为轻量
 实现），测试全程无模型下载、无网络访问。一键运行全部测试：
